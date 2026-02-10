@@ -1,0 +1,108 @@
+[package]
+edition = "2024"
+name = "synology-photo-frame"
+rust-version = "1.88"
+version = "0.1.0"
+
+[[bin]]
+name = "synology-photo-frame"
+path = "./src/bin/main.rs"
+
+[dependencies]
+esp-hal = { version = "~1.0", features = [
+  "defmt",
+  "esp32s3",
+  "unstable",
+  "psram",
+] }
+
+esp-rtos = { version = "0.2.0", features = [
+  "defmt",
+  "embassy",
+  "esp-alloc",
+  "esp-radio",
+  "esp32s3",
+] }
+
+defmt = "1.0.1"
+esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32s3"] }
+
+embassy-net = { version = "0.8.0", features = [
+  "defmt",
+  "dhcpv4",
+  "dns",
+  "mdns",
+  "medium-ethernet",
+  "tcp",
+  "udp",
+], default-features = false }
+embedded-io = { version = "0.7.1", features = ["defmt"] }
+embedded-io-async = { version = "0.7.0", features = ["defmt"] }
+esp-alloc = { version = "0.9.0", features = ["defmt"] }
+esp-backtrace = { version = "0.18.1", features = [
+  "defmt",
+  "esp32s3",
+  "panic-handler",
+] }
+esp-println = { version = "0.16.1", features = ["defmt-espflash", "esp32s3"] }
+# for more networking protocol support see https://crates.io/crates/edge-net
+embassy-executor = { version = "0.9.1", features = ["defmt"] }
+embassy-time = { version = "0.5.0", features = ["defmt"] }
+esp-radio = { version = "0.17.0", features = [
+  "defmt",
+  "esp-alloc",
+  "esp32s3",
+  "smoltcp",
+  "unstable",
+  "wifi",
+] }
+smoltcp = { version = "0.12.0", default-features = false, features = [
+  "defmt",
+  "medium-ethernet",
+  "multicast",
+  "proto-dhcpv4",
+  "proto-dns",
+  "proto-ipv4",
+  "socket-dns",
+  "socket-icmp",
+  "socket-raw",
+  "socket-tcp",
+  "socket-udp",
+] }
+critical-section = "1.2.0"
+static_cell = "2.1.1"
+embedded-graphics = "0.8.1"
+embedded-hal-bus = "0.3.0"
+
+# Pull Request in progress https://github.com/caemor/epd-waveshare/pull/235
+# epd-waveshare = { version = "0.6.0", features = ["graphics"] }
+epd-waveshare = { git = "https://github.com/RitwikSaikia/epd-waveshare", branch = "feat/epd7in3e_impl", features = [
+  "graphics",
+] }
+reqwless = { version = "0.14.0", features = [
+  "defmt",
+  "embedded-tls",
+], default-features = false }
+zune-jpeg = { version = "0.5.12", default-features = false }
+embedded-tls = { version = "0.18.0", default-features = false, features = [
+  "defmt",
+] }
+
+
+
+[build-dependencies]
+dotenvy = "0.15.7"
+
+[profile.dev]
+# Rust debug is too slow.
+# For debug builds always builds with some optimization
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1        # LLVM can perform better optimizations using a single thread
+debug = 2
+debug-assertions = false
+incremental = false
+lto = 'fat'
+opt-level = 's'
+overflow-checks = false

@@ -1,0 +1,18 @@
+[target.xtensa-esp32s3-none-elf]
+runner = "espflash flash --monitor --chip esp32s3 --log-format defmt"
+
+[env]
+DEFMT_LOG="info"
+# To get more RAM
+ESP_HAL_CONFIG_PSRAM_MODE = "octal"
+
+[build]
+rustflags = [
+  "-C", "link-arg=-nostartfiles",
+  "-Z", "stack-protector=all",
+]
+
+target = "xtensa-esp32s3-none-elf"
+
+[unstable]
+build-std = ["alloc", "core"]
