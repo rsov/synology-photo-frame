@@ -7,7 +7,7 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
-use defmt::{info, println};
+use defmt::{error, info, println};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use embedded_graphics::image::{Image, ImageRaw};
@@ -24,6 +24,7 @@ use esp_hal::gpio::{Level, Output, OutputConfig};
 use esp_hal::spi::master::Spi;
 use esp_hal::timer::timg::TimerGroup;
 use reqwless::client::TlsConfig;
+use reqwless::request::RequestBuilder;
 use zune_jpeg::JpegDecoder;
 use zune_jpeg::zune_core::bytestream::ZCursor;
 use {esp_backtrace as _, esp_println as _};
@@ -237,33 +238,40 @@ async fn get_image_data<'t>(stack: embassy_net::Stack<'t>) -> alloc::vec::Vec<u8
     // const URL: &str = env!("WIFI_URL");
     let url = "https://makeameme.org/media/templates/mocking-spongebob.jpg";
     // let url = "https://makeameme.org/media/templates/happy_homer.jpg";
-    // let url = "https://c.tadst.com/gfx/600x337/rainbow.jpg?1";
+    // let url = "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Double-alaskan-rainbow.jpg/500px-Double-alaskan-rainbow.jpg";
 
     let mut request = http_client
         .request(reqwless::request::Method::GET, url)
         .await
-        .unwrap();
+        .unwrap()
+        .headers(&[("User-Agent", "ESP32S3")]);
+
     println!("HTTP request done?");
 
     let mut http_rx_buf = [0u8; 4096];
-    let mut response = request
-        .send(&mut http_rx_buf)
-        .await
-        .unwrap()
-        .body()
-        .reader();
+    let response = request.send(&mut http_rx_buf).await.unwrap();
+    let status = response.status.clone();
+
+    let mut body = response.body().reader();
     println!("Reading body");
 
-    let mut body = alloc::vec::Vec::new();
+    let mut data = alloc::vec::Vec::new();
     loop {
-        let chunk = response.fill_buf().await.unwrap();
+        let chunk = body.fill_buf().await.unwrap();
         if chunk.is_empty() {
             break;
         }
-        body.extend_from_slice(chunk);
+
+        println!("{:?}", chunk);
+        data.extend_from_slice(chunk);
         let len = chunk.len();
-        response.consume(len);
+        body.consume(len);
     }
     println!("Got body");
-    body
+
+    if !status.is_successful() {
+        error!("{:?}", core::str::from_utf8(&data).unwrap());
+    }
+
+    data
 }
