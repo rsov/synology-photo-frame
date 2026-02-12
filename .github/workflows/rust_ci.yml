@@ -28,6 +28,8 @@ jobs:
           - command: clippy
             args: --all-features --workspace -- -D warnings
     steps:
+      - name: Make fake env
+        run: cp .env.example .env
       - name: Checkout repository
         uses: actions/checkout@v6
       - name: Setup Rust
