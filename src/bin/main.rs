@@ -7,6 +7,7 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
+use core::slice::ChunksExact;
 use defmt::{error, info, println};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
@@ -98,20 +99,25 @@ async fn main(spawner: Spawner) -> ! {
 
     let mut hex_pixels = alloc::vec::Vec::<u8>::new();
 
-    use core::slice::ChunksExact;
     let image_chunks: ChunksExact<'_, u8> = pixels.chunks_exact(3);
 
     for rgb in image_chunks {
         let rgb888 = Rgb888::new(rgb[0], rgb[1], rgb[2]);
-        let hex_color: HexColor = rgb888.into();
+        let hex_color: HexColor = rgb888.into(); // Dithering done here, waveshare lib implements it
 
         hex_pixels.push(hex_color.get_nibble());
     }
 
     println!("image size: {:?}x{:?}", img_info.width, img_info.height);
 
-    let raw = ImageRaw::<HexColor>::new(&hex_pixels, img_info.width as u32);
+    let raw = ImageRaw::<HexColor>::new(&hex_pixels, (img_info.width ) as u32);
+    let r = raw.bounding_box().size;
+    println!("raw size {:?}x{:?}", r.width, r.height);
+
     let image = Image::new(&raw, Point::zero());
+
+    let s = image.bounding_box().size;
+    println!("Embedde image size: {:?}x{:?}", s.width, s.height);
 
     let epd_spi_bus = Spi::new(
         peripherals.SPI2,
@@ -236,8 +242,8 @@ async fn get_image_data<'t>(stack: embassy_net::Stack<'t>) -> alloc::vec::Vec<u8
     let mut http_client = reqwless::client::HttpClient::new_with_tls(&tcp, &dns, config);
 
     // const URL: &str = env!("WIFI_URL");
-    let url = "https://makeameme.org/media/templates/mocking-spongebob.jpg";
-    // let url = "https://makeameme.org/media/templates/happy_homer.jpg";
+    // let url = "https://makeameme.org/media/templates/mocking-spongebob.jpg";
+    let url = "https://makeameme.org/media/templates/happy_homer.jpg";
     // let url = "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Double-alaskan-rainbow.jpg/500px-Double-alaskan-rainbow.jpg";
 
     let mut request = http_client
@@ -262,7 +268,6 @@ async fn get_image_data<'t>(stack: embassy_net::Stack<'t>) -> alloc::vec::Vec<u8
             break;
         }
 
-        println!("{:?}", chunk);
         data.extend_from_slice(chunk);
         let len = chunk.len();
         body.consume(len);

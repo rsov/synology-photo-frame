@@ -76,9 +76,12 @@ embedded-hal-bus = "0.3.0"
 
 # Pull Request in progress https://github.com/caemor/epd-waveshare/pull/235
 # epd-waveshare = { version = "0.6.0", features = ["graphics"] }
-epd-waveshare = { git = "https://github.com/RitwikSaikia/epd-waveshare", branch = "feat/epd7in3e_impl", features = [
-  "graphics",
-] }
+# epd-waveshare = { git = "https://github.com/RitwikSaikia/epd-waveshare", branch = "feat/epd7in3e_impl", features = [
+#   "graphics",
+# ] }
+
+epd-waveshare = { path = "../epd-waveshare", features = ["graphics"] }
+
 reqwless = { version = "0.14.0", features = [
   "defmt",
   "embedded-tls",
@@ -87,7 +90,6 @@ zune-jpeg = { version = "0.5.12", default-features = false }
 embedded-tls = { version = "0.18.0", default-features = false, features = [
   "defmt",
 ] }
-
 
 
 [build-dependencies]
