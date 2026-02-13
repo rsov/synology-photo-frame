@@ -7,6 +7,8 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
+use alloc::vec;
+use alloc::vec::Vec;
 use core::slice::ChunksExact;
 use defmt::{error, info, println};
 use embassy_executor::Spawner;
@@ -97,20 +99,27 @@ async fn main(spawner: Spawner) -> ! {
     let pixels = decoder.decode().expect("is fucked");
     let img_info = decoder.info().expect("Missing JPEG info");
 
-    let mut hex_pixels = alloc::vec::Vec::<u8>::new();
+    let mut rbg_pixels = alloc::vec::Vec::<Rgb888>::new();
 
     let image_chunks: ChunksExact<'_, u8> = pixels.chunks_exact(3);
 
     for rgb in image_chunks {
         let rgb888 = Rgb888::new(rgb[0], rgb[1], rgb[2]);
-        let hex_color: HexColor = rgb888.into(); // Dithering done here, waveshare lib implements it
-
-        hex_pixels.push(hex_color.get_nibble());
+        // let hex_color: HexColor = rgb888.into(); // Dithering done here, waveshare lib implements it
+        rbg_pixels.push(rgb888);
     }
+
+    let dithered_buffer = floyd_steinberg_dither(
+        img_info.width.into(),
+        img_info.height.into(),
+        &mut rbg_pixels,
+    );
+    let bytes: Vec<u8> = dithered_buffer.iter().map(|c| c.get_nibble()).collect();
+    let slice: &[u8] = &bytes;
 
     println!("image size: {:?}x{:?}", img_info.width, img_info.height);
 
-    let raw = ImageRaw::<HexColor>::new(&hex_pixels, (img_info.width ) as u32);
+    let raw = ImageRaw::<HexColor>::new(&slice, (img_info.width) as u32);
     let r = raw.bounding_box().size;
     println!("raw size {:?}x{:?}", r.width, r.height);
 
@@ -279,4 +288,84 @@ async fn get_image_data<'t>(stack: embassy_net::Stack<'t>) -> alloc::vec::Vec<u8
     }
 
     data
+}
+
+// This bit was Ai generated. Could implement better buffer handling
+// TODO: only need width, height can be got from the bugger size
+pub fn floyd_steinberg_dither(width: usize, height: usize, src: &[Rgb888]) -> Vec<HexColor> {
+    assert_eq!(src.len(), width * height);
+
+    // Working buffer with error accumulation
+    let mut work: Vec<[f32; 3]> = src
+        .iter()
+        .map(|p| [p.r() as f32, p.g() as f32, p.b() as f32])
+        .collect();
+
+    let mut out = vec![HexColor::White; width * height];
+
+    for y in 0..height {
+        for x in 0..width {
+            let idx = y * width + x;
+
+            let old = work[idx];
+
+            // Convert to Rgb888 for your existing From<Rgb888> → HexColor
+            let rgb = Rgb888::new(
+                old[0].clamp(0.0, 255.0) as u8,
+                old[1].clamp(0.0, 255.0) as u8,
+                old[2].clamp(0.0, 255.0) as u8,
+            );
+
+            let new_color = HexColor::from(rgb);
+            out[idx] = new_color;
+
+            // Quantized RGB from your palette
+            let (qr, qg, qb) = new_color.rgb();
+            let quant = [qr as f32, qg as f32, qb as f32];
+
+            // Error = original - quantized
+            let err = [old[0] - quant[0], old[1] - quant[1], old[2] - quant[2]];
+
+            // Floyd–Steinberg diffusion
+            //       *   7/16
+            //  3/16 5/16 1/16
+
+            // Right
+            if x + 1 < width {
+                let i = idx + 1;
+                for c in 0..3 {
+                    work[i][c] += err[c] * 7.0 / 16.0;
+                }
+            }
+
+            // Bottom row
+            if y + 1 < height {
+                // Bottom-left
+                if x > 0 {
+                    let i = idx + width - 1;
+                    for c in 0..3 {
+                        work[i][c] += err[c] * 3.0 / 16.0;
+                    }
+                }
+
+                // Bottom
+                {
+                    let i = idx + width;
+                    for c in 0..3 {
+                        work[i][c] += err[c] * 5.0 / 16.0;
+                    }
+                }
+
+                // Bottom-right
+                if x + 1 < width {
+                    let i = idx + width + 1;
+                    for c in 0..3 {
+                        work[i][c] += err[c] * 1.0 / 16.0;
+                    }
+                }
+            }
+        }
+    }
+
+    out
 }
