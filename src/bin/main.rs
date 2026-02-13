@@ -109,11 +109,6 @@ async fn main(spawner: Spawner) -> ! {
     let r = raw.bounding_box().size;
     println!("raw size {:?}x{:?}", r.width, r.height);
 
-    let image = Image::new(&raw, Point::zero());
-
-    let s = image.bounding_box().size;
-    println!("Embedde image size: {:?}x{:?}", s.width, s.height);
-
     let epd_spi_bus = Spi::new(
         peripherals.SPI2,
         esp_hal::spi::master::Config::default()
@@ -153,12 +148,13 @@ async fn main(spawner: Spawner) -> ! {
 
     let mut display = Display7in3e::default();
 
-    // embedded_graphics::primitives::Rectangle::new(Point::new(0, 0), Size::new(999, 999))
-    //     .into_styled(embedded_graphics::primitives::PrimitiveStyle::with_fill(
-    //         HexColor::Yellow,
-    //     ))
-    //     .draw(&mut display)
-    //     .unwrap();
+    let size = display.size();
+    let center = Point::new((size.width as i32) / 2, (size.height as i32) / 2);
+
+    let image = Image::with_center(&raw, center);
+
+    let s = image.bounding_box().size;
+    println!("Embedde image size: {:?}x{:?}", s.width, s.height);
 
     image.draw(&mut display).unwrap();
 
@@ -237,8 +233,9 @@ async fn get_image_data<'t>(stack: embassy_net::Stack<'t>) -> alloc::vec::Vec<u8
     let mut http_client = reqwless::client::HttpClient::new_with_tls(&tcp, &dns, config);
 
     // const URL: &str = env!("WIFI_URL");
-    let url = "https://makeameme.org/media/templates/mocking-spongebob.jpg";
+    // let url = "https://makeameme.org/media/templates/mocking-spongebob.jpg";";
     // let url = "https://makeameme.org/media/templates/happy_homer.jpg";
+    let url = "https://makeameme.org/media/templates/upvote_obama.jpg";
     // let url = "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Double-alaskan-rainbow.jpg/500px-Double-alaskan-rainbow.jpg";
 
     let mut request = http_client
