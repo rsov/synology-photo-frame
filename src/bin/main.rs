@@ -9,7 +9,6 @@
 
 use alloc::vec;
 use alloc::vec::Vec;
-use core::slice::ChunksExact;
 use defmt::{error, info, println};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
@@ -96,30 +95,17 @@ async fn main(spawner: Spawner) -> ! {
     let cursor = ZCursor::new(image_bytes);
     let mut decoder = JpegDecoder::new(cursor);
 
-    let pixels = decoder.decode().expect("is fucked");
+    let mut pixels = decoder.decode().expect("is fucked");
     let img_info = decoder.info().expect("Missing JPEG info");
 
-    let mut rbg_pixels = alloc::vec::Vec::<Rgb888>::new();
+    let dithered_bytes = floyd_steinberg_dither(img_info.width.into(), &mut pixels);
 
-    let image_chunks: ChunksExact<'_, u8> = pixels.chunks_exact(3);
-
-    for rgb in image_chunks {
-        let rgb888 = Rgb888::new(rgb[0], rgb[1], rgb[2]);
-        // let hex_color: HexColor = rgb888.into(); // Dithering done here, waveshare lib implements it
-        rbg_pixels.push(rgb888);
-    }
-
-    let dithered_buffer = floyd_steinberg_dither(
-        img_info.width.into(),
-        img_info.height.into(),
-        &mut rbg_pixels,
-    );
-    let bytes: Vec<u8> = dithered_buffer.iter().map(|c| c.get_nibble()).collect();
-    let slice: &[u8] = &bytes;
-
+    // I think HexColor should be embedded_graphics_core::pixelcolor::raw::RawU4 because it causes this weird bug
+    // image size: 600x338
+    // embedded grahics size: 600x676
     println!("image size: {:?}x{:?}", img_info.width, img_info.height);
 
-    let raw = ImageRaw::<HexColor>::new(&slice, (img_info.width) as u32);
+    let raw = ImageRaw::<HexColor>::new(&dithered_bytes, (img_info.width) as u32);
     let r = raw.bounding_box().size;
     println!("raw size {:?}x{:?}", r.width, r.height);
 
@@ -251,8 +237,8 @@ async fn get_image_data<'t>(stack: embassy_net::Stack<'t>) -> alloc::vec::Vec<u8
     let mut http_client = reqwless::client::HttpClient::new_with_tls(&tcp, &dns, config);
 
     // const URL: &str = env!("WIFI_URL");
-    // let url = "https://makeameme.org/media/templates/mocking-spongebob.jpg";
-    let url = "https://makeameme.org/media/templates/happy_homer.jpg";
+    let url = "https://makeameme.org/media/templates/mocking-spongebob.jpg";
+    // let url = "https://makeameme.org/media/templates/happy_homer.jpg";
     // let url = "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Double-alaskan-rainbow.jpg/500px-Double-alaskan-rainbow.jpg";
 
     let mut request = http_client
@@ -291,17 +277,16 @@ async fn get_image_data<'t>(stack: embassy_net::Stack<'t>) -> alloc::vec::Vec<u8
 }
 
 // This bit was Ai generated. Could implement better buffer handling
-// TODO: only need width, height can be got from the bugger size
-pub fn floyd_steinberg_dither(width: usize, height: usize, src: &[Rgb888]) -> Vec<HexColor> {
-    assert_eq!(src.len(), width * height);
+pub fn floyd_steinberg_dither(width: usize, src: &[u8]) -> Vec<u8> {
+    let height = src.len() / (width * 3);
+    assert_eq!(src.len(), width * height * 3);
 
-    // Working buffer with error accumulation
     let mut work: Vec<[f32; 3]> = src
-        .iter()
-        .map(|p| [p.r() as f32, p.g() as f32, p.b() as f32])
+        .chunks_exact(3)
+        .map(|c| [c[0] as f32, c[1] as f32, c[2] as f32])
         .collect();
 
-    let mut out = vec![HexColor::White; width * height];
+    let mut out = vec![0u8; width * height];
 
     for y in 0..height {
         for x in 0..width {
@@ -317,7 +302,7 @@ pub fn floyd_steinberg_dither(width: usize, height: usize, src: &[Rgb888]) -> Ve
             );
 
             let new_color = HexColor::from(rgb);
-            out[idx] = new_color;
+            out[idx] = new_color.get_nibble();
 
             // Quantized RGB from your palette
             let (qr, qg, qb) = new_color.rgb();
