@@ -24,6 +24,7 @@ use esp_hal::spi::master::Spi;
 use esp_hal::timer::timg::TimerGroup;
 use reqwless::client::TlsConfig;
 use reqwless::request::RequestBuilder;
+use serde_json::json;
 use synology_photo_frame::images::floyd_steinberg_dither;
 use zune_jpeg::JpegDecoder;
 use zune_jpeg::zune_core::bytestream::ZCursor;
@@ -88,6 +89,7 @@ async fn main(spawner: Spawner) -> ! {
     net_stack.wait_config_up().await;
     println!("Network config up! {:?}", net_stack.config_v4());
 
+    // get_proxy_address(net_stack, "TEST").await;
     let image_bytes = get_image_data(net_stack).await;
 
     let cursor = ZCursor::new(image_bytes);
@@ -263,6 +265,90 @@ async fn get_image_data<'t>(stack: embassy_net::Stack<'t>) -> alloc::vec::Vec<u8
         body.consume(len);
     }
     println!("Got body");
+
+    if !status.is_successful() {
+        error!("{:?}", core::str::from_utf8(&data).unwrap());
+    }
+
+    data
+}
+
+// TODO: Figure this out
+// [ERROR] Failed to build HTTP request: Tls(HandshakeAborted(Warning, CloseNotify)) (synology_photo_frame src/bin/main.rs:320)
+async fn get_proxy_address<'t>(
+    stack: embassy_net::Stack<'t>,
+    quick_connect_id: &str,
+) -> alloc::vec::Vec<u8> {
+    // DNS Client
+    let dns = embassy_net::dns::DnsSocket::new(stack);
+
+    // TCP state
+    let tcp_state = embassy_net::tcp::client::TcpClientState::<1, 4096, 4096>::new();
+    let tcp = embassy_net::tcp::client::TcpClient::new(stack, &tcp_state);
+
+    println!("Attempting to do HTTP request2");
+
+    let mut write_buffer = [0u8; 8096];
+    let mut read_buffer = [0u8; 26640];
+    let config = TlsConfig::new(
+        696969,
+        &mut read_buffer,
+        &mut write_buffer,
+        reqwless::client::TlsVerify::None,
+    );
+
+    let mut http_client = reqwless::client::HttpClient::new_with_tls(&tcp, &dns, config);
+
+    // TODO: Extract the HTTP CLIENT stuff somewhere else?
+
+    let url = "https://global.quickconnect.to/Serv.php";
+
+    let request_body = json!({
+        "version": 1,
+        "command": "get_server_info",
+        "stop_when_error": false,
+        "stop_when_success": false,
+        "id": "mainapp_https",
+        "serverID": quick_connect_id,
+        "is_gofile": false,
+        "path": ""
+    });
+
+    let mut request_builder = http_client
+        .request(reqwless::request::Method::POST, url)
+        .await;
+
+    if let Err(e) = request_builder {
+        error!("Failed to build HTTP request: {:?}", e);
+        return alloc::vec::Vec::new();
+    }
+
+    let mut request = request_builder
+        .unwrap()
+        .headers(&[("User-Agent", "ESP32S3")])
+        .body(request_body.as_str().unwrap().as_bytes());
+
+    println!("Getting proxy address");
+
+    let mut http_rx_buf = [0u8; 4096];
+    let response = request.send(&mut http_rx_buf).await.unwrap();
+    let status = response.status.clone();
+
+    let mut body = response.body().reader();
+    println!("Reading body");
+
+    let mut data = alloc::vec::Vec::new();
+    loop {
+        let chunk = body.fill_buf().await.unwrap();
+        if chunk.is_empty() {
+            break;
+        }
+
+        data.extend_from_slice(chunk);
+        let len = chunk.len();
+        body.consume(len);
+    }
+    println!("Got body {:?}", core::str::from_utf8(&data).unwrap());
 
     if !status.is_successful() {
         error!("{:?}", core::str::from_utf8(&data).unwrap());
