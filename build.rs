@@ -1,10 +1,22 @@
 fn main() {
     dotenvy::from_filename(".env").ok();
-    if let Ok(ssid) = std::env::var("WIFI_SSID") {
-        println!("cargo:rustc-env=WIFI_SSID={ssid}");
+    if let Ok(e) = std::env::var("WIFI_SSID") {
+        println!("cargo:rustc-env=WIFI_SSID={e}");
     }
-    if let Ok(ssid) = std::env::var("WIFI_PASSWORD") {
-        println!("cargo:rustc-env=WIFI_PASSWORD={ssid}");
+    if let Ok(e) = std::env::var("WIFI_PASSWORD") {
+        println!("cargo:rustc-env=WIFI_PASSWORD={e}");
+    }
+    if let Ok(e) = std::env::var("SYN_BASE") {
+        println!("cargo:rustc-env=SYN_BASE={e}");
+    }
+    if let Ok(e) = std::env::var("SYN_USER") {
+        println!("cargo:rustc-env=SYN_USER={e}");
+    }
+    if let Ok(e) = std::env::var("SYN_PASS") {
+        println!("cargo:rustc-env=SYN_PASS={e}");
+    }
+        if let Ok(e) = std::env::var("SYN_ALBUM") {
+        println!("cargo:rustc-env=SYN_ALBUM={e}");
     }
 
     linker_be_nice();

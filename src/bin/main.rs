@@ -7,12 +7,16 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
+use alloc::borrow::ToOwned;
+use alloc::format;
+use alloc::string::{String, ToString};
 use defmt::{error, info, println};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use embedded_graphics::image::{Image, ImageRaw};
 use embedded_graphics::prelude::*;
 use embedded_hal_bus::spi::ExclusiveDevice;
+use embedded_io_async::BufRead;
 use epd_waveshare::color::HexColor;
 use epd_waveshare::epd7in3e::{Display7in3e, Epd7in3e};
 use epd_waveshare::prelude::WaveshareDisplay;
@@ -24,6 +28,7 @@ use esp_hal::spi::master::Spi;
 use esp_hal::timer::timg::TimerGroup;
 use reqwless::client::TlsConfig;
 use reqwless::request::RequestBuilder;
+use serde::Deserialize;
 use serde_json::json;
 use synology_photo_frame::images::floyd_steinberg_dither;
 use zune_jpeg::JpegDecoder;
@@ -34,6 +39,12 @@ extern crate alloc;
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
+
+static NETWORK_RESOURCES: static_cell::ConstStaticCell<embassy_net::StackResources<4>> =
+    static_cell::ConstStaticCell::new(embassy_net::StackResources::new());
+
+static RADIO_CONTROLLER: static_cell::StaticCell<esp_radio::Controller> =
+    static_cell::StaticCell::new();
 
 #[allow(
     clippy::large_stack_frames,
@@ -89,8 +100,14 @@ async fn main(spawner: Spawner) -> ! {
     net_stack.wait_config_up().await;
     println!("Network config up! {:?}", net_stack.config_v4());
 
+    const SYN_BASE: &str = env!("SYN_BASE");
+    const SYN_USER: &str = env!("SYN_USER");
+    const SYN_PASS: &str = env!("SYN_PASS");
+    const SYN_ALBUM: &str = env!("SYN_ALBUM");
+    let image_bytes = get_stuff(net_stack, SYN_BASE, SYN_USER, SYN_PASS, SYN_ALBUM).await;
+
     // get_proxy_address(net_stack, "TEST").await;
-    let image_bytes = get_image_data(net_stack).await;
+    // let image_bytes = get_image_data(net_stack).await;
 
     let cursor = ZCursor::new(image_bytes);
     let mut decoder = JpegDecoder::new(cursor);
@@ -204,75 +221,6 @@ async fn wifi_task(mut controller: esp_radio::wifi::WifiController<'static>) {
     }
 }
 
-static NETWORK_RESOURCES: static_cell::ConstStaticCell<embassy_net::StackResources<4>> =
-    static_cell::ConstStaticCell::new(embassy_net::StackResources::new());
-
-static RADIO_CONTROLLER: static_cell::StaticCell<esp_radio::Controller> =
-    static_cell::StaticCell::new();
-
-use embedded_io_async::BufRead;
-async fn get_image_data<'t>(stack: embassy_net::Stack<'t>) -> alloc::vec::Vec<u8> {
-    // DNS Client
-    let dns = embassy_net::dns::DnsSocket::new(stack);
-
-    // TCP state
-    let tcp_state = embassy_net::tcp::client::TcpClientState::<1, 4096, 4096>::new();
-    let tcp = embassy_net::tcp::client::TcpClient::new(stack, &tcp_state);
-
-    println!("Attempting to do HTTP request");
-
-    let mut write_buffer = [0u8; 4096];
-    let mut read_buffer = [0u8; 16640];
-    let config = TlsConfig::new(
-        69420,
-        &mut read_buffer,
-        &mut write_buffer,
-        reqwless::client::TlsVerify::None,
-    );
-
-    let mut http_client = reqwless::client::HttpClient::new_with_tls(&tcp, &dns, config);
-
-    // const URL: &str = env!("WIFI_URL");
-    // let url = "https://makeameme.org/media/templates/mocking-spongebob.jpg";";
-    // let url = "https://makeameme.org/media/templates/happy_homer.jpg";
-    let url = "https://makeameme.org/media/templates/upvote_obama.jpg";
-    // let url = "https://upload.wikimedia.org/wikipedia/commons/thumb/5/5c/Double-alaskan-rainbow.jpg/500px-Double-alaskan-rainbow.jpg";
-
-    let mut request = http_client
-        .request(reqwless::request::Method::GET, url)
-        .await
-        .unwrap()
-        .headers(&[("User-Agent", "ESP32S3")]);
-
-    println!("HTTP request done?");
-
-    let mut http_rx_buf = [0u8; 4096];
-    let response = request.send(&mut http_rx_buf).await.unwrap();
-    let status = response.status.clone();
-
-    let mut body = response.body().reader();
-    println!("Reading body");
-
-    let mut data = alloc::vec::Vec::new();
-    loop {
-        let chunk = body.fill_buf().await.unwrap();
-        if chunk.is_empty() {
-            break;
-        }
-
-        data.extend_from_slice(chunk);
-        let len = chunk.len();
-        body.consume(len);
-    }
-    println!("Got body");
-
-    if !status.is_successful() {
-        error!("{:?}", core::str::from_utf8(&data).unwrap());
-    }
-
-    data
-}
-
 // TODO: Figure this out
 // [ERROR] Failed to build HTTP request: Tls(HandshakeAborted(Warning, CloseNotify)) (synology_photo_frame src/bin/main.rs:320)
 async fn get_proxy_address<'t>(
@@ -314,7 +262,7 @@ async fn get_proxy_address<'t>(
         "path": ""
     });
 
-    let mut request_builder = http_client
+    let request_builder = http_client
         .request(reqwless::request::Method::POST, url)
         .await;
 
@@ -355,4 +303,218 @@ async fn get_proxy_address<'t>(
     }
 
     data
+}
+
+#[derive(Deserialize, Debug)]
+struct GetThumbnailParams {
+    id: i64,
+    cache_key: String,
+}
+
+async fn get_stuff<'t>(
+    stack: embassy_net::Stack<'t>,
+    base: &str,
+    user: &str,
+    pass: &str,
+    album_passphase: &str,
+) -> alloc::vec::Vec<u8> {
+    // https://<IP_ADDRESS>/photo/webapi/auth.cgi?api=SYNO.API.Auth&version=3&method=login&account=<USER>&passwd=<PASSWORD>
+
+    let dns = embassy_net::dns::DnsSocket::new(stack);
+    let tcp_state = embassy_net::tcp::client::TcpClientState::<1, 4096, 4096>::new();
+    let tcp = embassy_net::tcp::client::TcpClient::new(stack, &tcp_state);
+
+    println!("Attempting to do HTTP request3");
+
+    let mut write_buffer = [0u8; 4096];
+    let mut read_buffer = [0u8; 16640];
+    let config = TlsConfig::new(
+        696969,
+        &mut read_buffer,
+        &mut write_buffer,
+        reqwless::client::TlsVerify::None,
+    );
+
+    let mut http_client = reqwless::client::HttpClient::new_with_tls(&tcp, &dns, config);
+
+    // First request: Authentication
+    let sid = {
+        let url = format!("{}/webapi/auth.cgi", base);
+
+        let request_body = format!(
+            "api=SYNO.API.Auth&version=3&method=login&account={}&passwd={}",
+            user, pass
+        );
+
+        let request_builder = http_client
+            .request(reqwless::request::Method::POST, &url)
+            .await;
+
+        if let Err(e) = request_builder {
+            error!("Failed to build HTTP request: {:?}", e);
+            return alloc::vec::Vec::new();
+        }
+
+        let mut request = request_builder
+            .unwrap()
+            .headers(&[("User-Agent", "ESP32S3")])
+            .body(request_body.as_bytes());
+
+        println!("Getting auth token");
+
+        let mut http_rx_buf = [0u8; 4096];
+        let response = request.send(&mut http_rx_buf).await.unwrap();
+        let status = response.status.clone();
+
+        let mut body = response.body().reader();
+        println!("Reading auth body");
+
+        let mut data = alloc::vec::Vec::new();
+        loop {
+            let chunk = body.fill_buf().await.unwrap();
+            if chunk.is_empty() {
+                break;
+            }
+
+            data.extend_from_slice(chunk);
+            let len = chunk.len();
+            body.consume(len);
+        }
+        println!("Got auth body {:?}", core::str::from_utf8(&data).unwrap());
+
+        if !status.is_successful() {
+            error!("{:?}", core::str::from_utf8(&data).unwrap());
+            return alloc::vec::Vec::new();
+        }
+
+        let stuff: serde_json::Value = serde_json::from_slice(&data).unwrap();
+        let sid = stuff["data"]["sid"].as_str().unwrap().to_owned();
+        println!("Auth SID: {:?}", sid.as_str());
+
+        sid.clone()
+    };
+
+    // Second request: List album items
+    let thumb_params: GetThumbnailParams = {
+        let request_album_body = format!(
+            "api=SYNO.Foto.Browse.Item&method=list&version=4&additional=%5B%22thumbnail%22%5D&offset=0&limit=6&sort_by=%22takentime%22&sort_direction=%22asc%22&passphrase=%22{}%22&_sid=%22{}%22",
+            album_passphase, sid
+        );
+
+        let url = format!("{}/webapi/entry.cgi/SYNO.Foto.Browse.Item", base);
+
+        let request_builder = http_client
+            .request(reqwless::request::Method::POST, &url)
+            .await;
+
+        if let Err(e) = request_builder {
+            error!("Failed to build HTTP request list album: {:?}", e);
+            return alloc::vec::Vec::new();
+        }
+
+        let mut request = request_builder
+            .unwrap()
+            .headers(&[("User-Agent", "ESP32S3")])
+            .body(request_album_body.as_bytes());
+
+        let mut http_rx_buf = [0u8; 4096];
+        let response = request.send(&mut http_rx_buf).await.unwrap();
+        let status = response.status.clone();
+
+        let mut body = response.body().reader();
+        println!("Reading album body");
+
+        let mut data = alloc::vec::Vec::new();
+        loop {
+            let chunk = body.fill_buf().await.unwrap();
+            if chunk.is_empty() {
+                break;
+            }
+
+            data.extend_from_slice(chunk);
+            let len = chunk.len();
+            body.consume(len);
+        }
+        println!("Got album body {:?}", core::str::from_utf8(&data).unwrap());
+
+        if !status.is_successful() {
+            error!("{:?}", core::str::from_utf8(&data).unwrap());
+        }
+
+        let stuff: serde_json::Value = serde_json::from_slice(&data).unwrap();
+
+        let photo_object = &stuff["data"]["list"][4];
+
+        let cache_key = photo_object["additional"]["thumbnail"]["cache_key"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let id = photo_object["id"].as_i64().unwrap();
+
+        println!("cache key {}", cache_key.as_str());
+        GetThumbnailParams {
+            id: id,
+            cache_key: cache_key,
+        }
+    };
+
+    {
+        let url = url::Url::parse_with_params(
+            format!("{}/synofoto/api/v2/t/Thumbnail/get", base).as_str(),
+            &[
+                ("api", "SYNO.Foto.Thumbnail"),
+                ("version", "1"),
+                ("method", "get"),
+                ("mode", "download"),
+                ("id", thumb_params.id.to_string().as_str()),
+                ("type", "unit"),
+                ("size", "m"),
+                ("passphrase", album_passphase),
+                ("cache_key", &thumb_params.cache_key),
+                ("_sid", &sid),
+            ],
+        )
+        .unwrap();
+
+        info!("[URL] -> {}", url.as_str());
+
+        let request_builder = http_client
+            .request(reqwless::request::Method::GET, &url.as_str())
+            .await;
+
+        if let Err(e) = request_builder {
+            error!("Failed to build HTTP request list album: {:?}", e);
+            return alloc::vec::Vec::new();
+        }
+
+        let mut request = request_builder
+            .unwrap()
+            .headers(&[("User-Agent", "ESP32S3")]);
+
+        let mut http_rx_buf = [0u8; 4096];
+        let response = request.send(&mut http_rx_buf).await.unwrap();
+        let status = response.status.clone();
+
+        let mut body = response.body().reader();
+        println!("Reading thumbnail body");
+
+        let mut data = alloc::vec::Vec::new();
+        loop {
+            let chunk = body.fill_buf().await.unwrap();
+            if chunk.is_empty() {
+                break;
+            }
+
+            data.extend_from_slice(chunk);
+            let len = chunk.len();
+            body.consume(len);
+        }
+
+        if !status.is_successful() {
+            error!("{:?}", core::str::from_utf8(&data).unwrap());
+        }
+
+        data
+    }
 }

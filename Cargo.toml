@@ -90,10 +90,14 @@ zune-jpeg = { version = "0.5.12", default-features = false }
 embedded-tls = { version = "0.18.0", default-features = false, features = [
   "defmt",
 ] }
-serde = { version = "1.0.228", default-features = false }
+serde = { version = "1.0.228", default-features = false, features = [
+  "derive",
+  "alloc",
+] }
 serde_json = { version = "1.0.149", default-features = false, features = [
   "alloc",
 ] }
+url = { version = "2.5.8", default-features = false }
 
 
 [build-dependencies]
