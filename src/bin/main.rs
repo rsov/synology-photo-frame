@@ -29,7 +29,7 @@ use esp_hal::timer::timg::TimerGroup;
 use reqwless::client::TlsConfig;
 use reqwless::request::RequestBuilder;
 use serde::Deserialize;
-use serde_json::{Value, json};
+use serde_json::json;
 use synology_photo_frame::images::floyd_steinberg_dither;
 use synology_photo_frame::images::mitchell_upscale;
 use zune_jpeg::JpegDecoder;
@@ -60,6 +60,9 @@ async fn main(spawner: Spawner) -> ! {
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73744);
     esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
+
+    let mut rtc = esp_hal::rtc_cntl::Rtc::new(peripherals.LPWR);
+    let mut gpio_btn_reset = peripherals.GPIO3;
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
@@ -143,7 +146,7 @@ async fn main(spawner: Spawner) -> ! {
     )
     .unwrap()
     .with_sck(peripherals.GPIO7)
-    .with_mosi(peripherals.GPIO8)
+    // .with_mosi(peripherals.GPIO8)
     .with_mosi(peripherals.GPIO9);
 
     info!("Bus ");
@@ -189,6 +192,23 @@ async fn main(spawner: Spawner) -> ! {
         .unwrap();
 
     epd7in3e.sleep(&mut epd_spi_dev, &mut delay).unwrap();
+
+    // let wakeup_pins: &mut [(
+    //     &mut dyn esp_hal::gpio::RtcPin,
+    //     esp_hal::rtc_cntl::sleep::WakeupLevel,
+    // )] = &mut [(
+    //     &mut gpio_btn_reset,
+    //     esp_hal::rtc_cntl::sleep::WakeupLevel::Low,
+    // )];
+    // let pin_wake_source = esp_hal::rtc_cntl::sleep::RtcioWakeupSource::new(wakeup_pins);
+
+    // let timer_wake_source =
+    //     esp_hal::rtc_cntl::sleep::TimerWakeupSource::new(core::time::Duration::from_secs(10 * 60));
+    // let wake_sources: &[&dyn esp_hal::rtc_cntl::sleep::WakeSource] =
+    //     &[&timer_wake_source, &pin_wake_source];
+
+    // println!("Going to deep sleep :)");
+    // rtc.sleep_deep(wake_sources);
 
     loop {
         info!("Hello world!");
@@ -333,8 +353,6 @@ async fn get_stuff<'t>(
     let tcp_state = embassy_net::tcp::client::TcpClientState::<1, 4096, 4096>::new();
     let tcp = embassy_net::tcp::client::TcpClient::new(stack, &tcp_state);
 
-    println!("Attempting to do HTTP request3");
-
     let mut write_buffer = [0u8; 4096];
     let mut read_buffer = [0u8; 16640];
     let config = TlsConfig::new(
@@ -346,17 +364,27 @@ async fn get_stuff<'t>(
 
     let mut http_client = reqwless::client::HttpClient::new_with_tls(&tcp, &dns, config);
 
+    info!("[HTTP] Ready");
+
     // First request: Authentication
     let sid = {
-        let url = format!("{}/webapi/auth.cgi", base);
+        let url = url::Url::parse_with_params(
+            format!("{}/webapi/entry.cgi", base).as_str(),
+            &[
+                ("api", "SYNO.API.Auth"),
+                ("version", "6"),
+                ("method", "login"),
+                ("format", "sid"),
+                ("account", user),
+                ("passwd", pass),
+            ],
+        )
+        .unwrap();
 
-        let request_body = format!(
-            "api=SYNO.API.Auth&version=3&method=login&account={}&passwd={}",
-            user, pass
-        );
+        info!("[HTTP] -> {}", url.as_str());
 
         let request_builder = http_client
-            .request(reqwless::request::Method::POST, &url)
+            .request(reqwless::request::Method::GET, &url.as_str())
             .await;
 
         if let Err(e) = request_builder {
@@ -364,19 +392,16 @@ async fn get_stuff<'t>(
             return alloc::vec::Vec::new();
         }
 
-        let mut request = request_builder
-            .unwrap()
-            .headers(&[("User-Agent", "ESP32S3")])
-            .body(request_body.as_bytes());
+        let mut request = request_builder.unwrap();
 
-        println!("Getting auth token");
+        info!("[HTTP] Getting auth token");
 
         let mut http_rx_buf = [0u8; 4096];
         let response = request.send(&mut http_rx_buf).await.unwrap();
         let status = response.status.clone();
 
         let mut body = response.body().reader();
-        println!("Reading auth body");
+        info!("[HTTP] Reading auth body");
 
         let mut data = alloc::vec::Vec::new();
         loop {
@@ -389,7 +414,10 @@ async fn get_stuff<'t>(
             let len = chunk.len();
             body.consume(len);
         }
-        println!("Got auth body {:?}", core::str::from_utf8(&data).unwrap());
+        info!(
+            "[HTTP] Got auth body {:?}",
+            core::str::from_utf8(&data).unwrap()
+        );
 
         if !status.is_successful() {
             error!("{:?}", core::str::from_utf8(&data).unwrap());
@@ -398,7 +426,7 @@ async fn get_stuff<'t>(
 
         let stuff: serde_json::Value = serde_json::from_slice(&data).unwrap();
         let sid = stuff["data"]["sid"].as_str().unwrap().to_owned();
-        println!("Auth SID: {:?}", sid.as_str());
+        info!("[HTTP] Auth SID: {:?}", sid.as_str());
 
         sid.clone()
     };
