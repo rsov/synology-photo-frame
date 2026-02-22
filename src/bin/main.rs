@@ -29,7 +29,7 @@ use esp_hal::timer::timg::TimerGroup;
 use reqwless::client::TlsConfig;
 use reqwless::request::RequestBuilder;
 use serde::Deserialize;
-use serde_json::json;
+use serde_json::{Value, json};
 use synology_photo_frame::images::floyd_steinberg_dither;
 use synology_photo_frame::images::mitchell_upscale;
 use zune_jpeg::JpegDecoder;
@@ -452,7 +452,16 @@ async fn get_stuff<'t>(
 
         let stuff: serde_json::Value = serde_json::from_slice(&data).unwrap();
 
-        let photo_object = &stuff["data"]["list"][4];
+        let album_list = stuff["data"]["list"].as_array().unwrap();
+
+        let rand = esp_hal::rng::Rng::new().random();
+        let rand_index = if album_list.is_empty() {
+            0
+        } else {
+            (rand as usize) % album_list.len() as usize
+        };
+
+        let photo_object = album_list.get(rand_index).unwrap();
 
         let cache_key = photo_object["additional"]["thumbnail"]["cache_key"]
             .as_str()
