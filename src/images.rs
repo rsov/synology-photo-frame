@@ -5,8 +5,69 @@ use alloc::vec::Vec;
 use embedded_graphics::pixelcolor::Rgb888;
 use epd_waveshare::prelude::HexColor;
 
+// This bit was Ai generated
+// The resize crate used too much memory and needed too much ceremony to covnert between RGB structs
+pub fn mitchell_upscale(
+    src: Vec<u8>,
+    src_width: usize,
+    src_height: usize,
+    target_width: usize,
+    target_height: usize,
+) -> (Vec<u8>, usize, usize) {
+    // Calculate aspect ratios to fit within target dimensions
+    let src_aspect = src_width as f32 / src_height as f32;
+    let target_aspect = target_width as f32 / target_height as f32;
+
+    let (new_width, new_height) = if src_aspect > target_aspect {
+        // Fit by width
+        (target_width, (target_width as f32 / src_aspect) as usize)
+    } else {
+        // Fit by height
+        ((target_height as f32 * src_aspect) as usize, target_height)
+    };
+
+    let mut output = vec![0u8; new_height * new_width * 3];
+
+    let x_ratio = src_width as f32 / new_width as f32;
+    let y_ratio = src_height as f32 / new_height as f32;
+
+    // Bilinear interpolation (simpler than full Mitchell for embedded)
+    for y in 0..new_height {
+        for x in 0..new_width {
+            let src_x = x as f32 * x_ratio;
+            let src_y = y as f32 * y_ratio;
+
+            let x0 = src_x as usize;
+            let y0 = src_y as usize;
+            let x1 = (x0 + 1).min(src_width - 1);
+            let y1 = (y0 + 1).min(src_height - 1);
+
+            let fx = src_x - x0 as f32;
+            let fy = src_y - y0 as f32;
+
+            let out_idx = (y * new_width + x) * 3;
+
+            for c in 0..3 {
+                let p00 = src[(y0 * src_width + x0) * 3 + c] as f32;
+                let p10 = src[(y0 * src_width + x1) * 3 + c] as f32;
+                let p01 = src[(y1 * src_width + x0) * 3 + c] as f32;
+                let p11 = src[(y1 * src_width + x1) * 3 + c] as f32;
+
+                let interpolated = p00 * (1.0 - fx) * (1.0 - fy)
+                    + p10 * fx * (1.0 - fy)
+                    + p01 * (1.0 - fx) * fy
+                    + p11 * fx * fy;
+
+                output[out_idx + c] = interpolated.clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+
+    (output, new_width, new_height)
+}
+
 // This bit was Ai generated. Could implement better buffer handling
-pub fn floyd_steinberg_dither(width: usize, src: &[u8]) -> Vec<u8> {
+pub fn floyd_steinberg_dither(width: usize, src: Vec<u8>) -> Vec<u8> {
     let height = src.len() / (width * 3);
     assert_eq!(src.len(), width * height * 3);
 

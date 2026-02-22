@@ -31,6 +31,7 @@ use reqwless::request::RequestBuilder;
 use serde::Deserialize;
 use serde_json::json;
 use synology_photo_frame::images::floyd_steinberg_dither;
+use synology_photo_frame::images::mitchell_upscale;
 use zune_jpeg::JpegDecoder;
 use zune_jpeg::zune_core::bytestream::ZCursor;
 use {esp_backtrace as _, esp_println as _};
@@ -112,17 +113,25 @@ async fn main(spawner: Spawner) -> ! {
     let cursor = ZCursor::new(image_bytes);
     let mut decoder = JpegDecoder::new(cursor);
 
-    let mut pixels = decoder.decode().expect("is fucked");
+    let pixels = decoder.decode().expect("is fucked");
     let img_info = decoder.info().expect("Missing JPEG info");
 
-    let dithered_bytes = floyd_steinberg_dither(img_info.width.into(), &mut pixels);
+    let (resized, resized_width, _resized_height) = mitchell_upscale(
+        pixels,
+        img_info.width.into(),
+        img_info.height.into(),
+        800,
+        480,
+    );
+
+    let dithered_bytes = floyd_steinberg_dither(resized_width.into(), resized);
 
     // I think HexColor should be embedded_graphics_core::pixelcolor::raw::RawU4 because it causes this weird bug
     // image size: 600x338
     // embedded grahics size: 600x676
     println!("image size: {:?}x{:?}", img_info.width, img_info.height);
 
-    let raw = ImageRaw::<HexColor>::new(&dithered_bytes, (img_info.width) as u32);
+    let raw = ImageRaw::<HexColor>::new(&dithered_bytes, (resized_width) as u32);
     let r = raw.bounding_box().size;
     println!("raw size {:?}x{:?}", r.width, r.height);
 
