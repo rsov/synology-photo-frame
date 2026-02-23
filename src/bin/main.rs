@@ -104,40 +104,6 @@ async fn main(spawner: Spawner) -> ! {
     net_stack.wait_config_up().await;
     println!("Network config up! {:?}", net_stack.config_v4());
 
-    const SYN_BASE: &str = env!("SYN_BASE");
-    const SYN_USER: &str = env!("SYN_USER");
-    const SYN_PASS: &str = env!("SYN_PASS");
-    const SYN_ALBUM: &str = env!("SYN_ALBUM");
-    let image_bytes = get_stuff(net_stack, SYN_BASE, SYN_USER, SYN_PASS, SYN_ALBUM).await;
-
-    // get_proxy_address(net_stack, "TEST").await;
-    // let image_bytes = get_image_data(net_stack).await;
-
-    let cursor = ZCursor::new(image_bytes);
-    let mut decoder = JpegDecoder::new(cursor);
-
-    let pixels = decoder.decode().expect("is fucked");
-    let img_info = decoder.info().expect("Missing JPEG info");
-
-    let (resized, resized_width, _resized_height) = mitchell_upscale(
-        pixels,
-        img_info.width.into(),
-        img_info.height.into(),
-        800,
-        480,
-    );
-
-    let dithered_bytes = floyd_steinberg_dither(resized_width.into(), resized);
-
-    // I think HexColor should be embedded_graphics_core::pixelcolor::raw::RawU4 because it causes this weird bug
-    // image size: 600x338
-    // embedded grahics size: 600x676
-    println!("image size: {:?}x{:?}", img_info.width, img_info.height);
-
-    let raw = ImageRaw::<HexColor>::new(&dithered_bytes, (resized_width) as u32);
-    let r = raw.bounding_box().size;
-    println!("raw size {:?}x{:?}", r.width, r.height);
-
     let epd_spi_bus = Spi::new(
         peripherals.SPI2,
         esp_hal::spi::master::Config::default()
@@ -176,6 +142,37 @@ async fn main(spawner: Spawner) -> ! {
     .unwrap();
 
     let mut display = Display7in3e::default();
+
+    const SYN_BASE: &str = env!("SYN_BASE");
+    const SYN_USER: &str = env!("SYN_USER");
+    const SYN_PASS: &str = env!("SYN_PASS");
+    const SYN_ALBUM: &str = env!("SYN_ALBUM");
+    let image_bytes = get_stuff(net_stack, SYN_BASE, SYN_USER, SYN_PASS, SYN_ALBUM).await;
+
+    let cursor = ZCursor::new(image_bytes);
+    let mut decoder = JpegDecoder::new(cursor);
+
+    let pixels = decoder.decode().expect("is fucked");
+    let img_info = decoder.info().expect("Missing JPEG info");
+
+    let (resized, resized_width, _resized_height) = mitchell_upscale(
+        pixels,
+        img_info.width.into(),
+        img_info.height.into(),
+        epd7in3e.width() as usize,
+        epd7in3e.height() as usize,
+    );
+
+    let dithered_bytes = floyd_steinberg_dither(resized_width.into(), resized);
+
+    // I think HexColor should be embedded_graphics_core::pixelcolor::raw::RawU4 because it causes this weird bug
+    // image size: 600x338
+    // embedded grahics size: 600x676
+    println!("image size: {:?}x{:?}", img_info.width, img_info.height);
+
+    let raw = ImageRaw::<HexColor>::new(&dithered_bytes, (resized_width) as u32);
+    let r = raw.bounding_box().size;
+    println!("raw size {:?}x{:?}", r.width, r.height);
 
     let size = display.size();
     let center = Point::new((size.width as i32) / 2, (size.height as i32) / 2);
@@ -347,13 +344,11 @@ async fn get_stuff<'t>(
     pass: &str,
     album_passphase: &str,
 ) -> alloc::vec::Vec<u8> {
-    // https://<IP_ADDRESS>/photo/webapi/auth.cgi?api=SYNO.API.Auth&version=3&method=login&account=<USER>&passwd=<PASSWORD>
-
     let dns = embassy_net::dns::DnsSocket::new(stack);
-    let tcp_state = embassy_net::tcp::client::TcpClientState::<1, 4096, 4096>::new();
+    let tcp_state = embassy_net::tcp::client::TcpClientState::<1, 2048, 2048>::new();
     let tcp = embassy_net::tcp::client::TcpClient::new(stack, &tcp_state);
 
-    let mut write_buffer = [0u8; 4096];
+    let mut write_buffer = [0u8; 2048];
     let mut read_buffer = [0u8; 16640];
     let config = TlsConfig::new(
         696969,
