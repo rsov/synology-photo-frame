@@ -433,15 +433,27 @@ async fn get_stuff<'t>(
 
     // Second request: List album items
     let thumb_params: GetThumbnailParams = {
-        let request_album_body = format!(
-            "api=SYNO.Foto.Browse.Item&method=list&version=4&additional=%5B%22thumbnail%22%5D&offset=0&limit=6&sort_by=%22takentime%22&sort_direction=%22asc%22&passphrase=%22{}%22&_sid=%22{}%22",
-            album_passphase, sid
-        );
+        let url = url::Url::parse_with_params(
+            format!("{}/webapi/entry.cgi/SYNO.Foto.Browse.Item", base).as_str(),
+            &[
+                ("api", "SYNO.Foto.Browse.Item"),
+                ("version", "4"),
+                ("method", "list"),
+                ("additional", "[\"thumbnail\"]"),
+                ("sort_by", "takentime"),
+                ("offset", "0"), // TODO: Use these to retreive just the one random
+                ("limit", "64"),
+                ("sort_direction", "asc"),
+                ("passphrase", album_passphase),
+                ("_sid", &sid),
+            ],
+        )
+        .unwrap();
 
-        let url = format!("{}/webapi/entry.cgi/SYNO.Foto.Browse.Item", base);
+        info!("[URL] -> {}", url.as_str());
 
         let request_builder = http_client
-            .request(reqwless::request::Method::POST, &url)
+            .request(reqwless::request::Method::GET, &url.as_str())
             .await;
 
         if let Err(e) = request_builder {
@@ -449,10 +461,7 @@ async fn get_stuff<'t>(
             return alloc::vec::Vec::new();
         }
 
-        let mut request = request_builder
-            .unwrap()
-            .headers(&[("User-Agent", "ESP32S3")])
-            .body(request_album_body.as_bytes());
+        let mut request = request_builder.unwrap();
 
         let mut http_rx_buf = [0u8; 4096];
         let response = request.send(&mut http_rx_buf).await.unwrap();
