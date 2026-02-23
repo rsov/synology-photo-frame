@@ -101,6 +101,13 @@ pub fn floyd_steinberg_dither(width: usize, src: Vec<u8>) -> Vec<u8> {
             // Error = original - quantized
             let err = [old[0] - quant[0], old[1] - quant[1], old[2] - quant[2]];
 
+
+            // Fuck around with these to change the vibrance / contrast
+            // Basically to make it brigher do:
+            //      *   -
+            //  -   +   +
+            let i_dunno_lol: f32 = 2.2;
+
             // Floyd–Steinberg diffusion
             //       *   7/16
             //  3/16 5/16 1/16
@@ -109,7 +116,7 @@ pub fn floyd_steinberg_dither(width: usize, src: Vec<u8>) -> Vec<u8> {
             if x + 1 < width {
                 let i = idx + 1;
                 for c in 0..3 {
-                    work[i][c] += err[c] * 7.0 / 16.0;
+                    work[i][c] += err[c] * (7.0 - i_dunno_lol) / 16.0;
                 }
             }
 
@@ -119,7 +126,7 @@ pub fn floyd_steinberg_dither(width: usize, src: Vec<u8>) -> Vec<u8> {
                 if x > 0 {
                     let i = idx + width - 1;
                     for c in 0..3 {
-                        work[i][c] += err[c] * 3.0 / 16.0;
+                        work[i][c] += err[c] * (3.0 - i_dunno_lol) / 16.0;
                     }
                 }
 
@@ -127,7 +134,7 @@ pub fn floyd_steinberg_dither(width: usize, src: Vec<u8>) -> Vec<u8> {
                 {
                     let i = idx + width;
                     for c in 0..3 {
-                        work[i][c] += err[c] * 5.0 / 16.0;
+                        work[i][c] += err[c] * (5.0 + i_dunno_lol) / 16.0;
                     }
                 }
 
@@ -135,7 +142,7 @@ pub fn floyd_steinberg_dither(width: usize, src: Vec<u8>) -> Vec<u8> {
                 if x + 1 < width {
                     let i = idx + width + 1;
                     for c in 0..3 {
-                        work[i][c] += err[c] * 1.0 / 16.0;
+                        work[i][c] += err[c] * (1.0 + i_dunno_lol) / 16.0;
                     }
                 }
             }
