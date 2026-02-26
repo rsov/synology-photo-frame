@@ -2482,7 +2482,6 @@ dependencies = [
  "reqwless",
  "serde",
  "serde_json",
- "smoltcp",
  "static_cell",
  "url",
  "zune-jpeg",

@@ -29,7 +29,6 @@ use esp_hal::timer::timg::TimerGroup;
 use reqwless::client::TlsConfig;
 use reqwless::request::RequestBuilder;
 use serde::Deserialize;
-use serde_json::json;
 use synology_photo_frame::images::floyd_steinberg_dither;
 use synology_photo_frame::images::mitchell_upscale;
 use zune_jpeg::JpegDecoder;
@@ -60,9 +59,6 @@ async fn main(spawner: Spawner) -> ! {
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73744);
     esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
-
-    let mut rtc = esp_hal::rtc_cntl::Rtc::new(peripherals.LPWR);
-    let mut gpio_btn_reset = peripherals.GPIO3;
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_rtos::start(timg0.timer0);
@@ -104,6 +100,13 @@ async fn main(spawner: Spawner) -> ! {
     net_stack.wait_config_up().await;
     println!("Network config up! {:?}", net_stack.config_v4());
 
+    const SYN_BASE: &str = env!("SYN_BASE");
+    const SYN_USER: &str = env!("SYN_USER");
+    const SYN_PASS: &str = env!("SYN_PASS");
+    const SYN_ALBUM: &str = env!("SYN_ALBUM");
+    // THIS HAS TO BE DONE ASAP BECAUSE THERE'S SOME BULLSH*T BEHAVIOUR IF THE STACK SIZE IS OVER 50% AND IT TRIES TO MAKE A COPY OF IT FOR SOME DUMB ASS REASON
+    let image_bytes = get_stuff(net_stack, SYN_BASE, SYN_USER, SYN_PASS, SYN_ALBUM).await;
+
     let epd_spi_bus = Spi::new(
         peripherals.SPI2,
         esp_hal::spi::master::Config::default()
@@ -116,7 +119,6 @@ async fn main(spawner: Spawner) -> ! {
     .with_mosi(peripherals.GPIO9);
 
     info!("Bus ");
-
     let mut delay = Delay::new();
 
     let screen_cs = Output::new(peripherals.GPIO10, Level::Low, OutputConfig::default());
@@ -143,11 +145,6 @@ async fn main(spawner: Spawner) -> ! {
 
     let mut display = Display7in3e::default();
 
-    const SYN_BASE: &str = env!("SYN_BASE");
-    const SYN_USER: &str = env!("SYN_USER");
-    const SYN_PASS: &str = env!("SYN_PASS");
-    const SYN_ALBUM: &str = env!("SYN_ALBUM");
-    let image_bytes = get_stuff(net_stack, SYN_BASE, SYN_USER, SYN_PASS, SYN_ALBUM).await;
 
     let cursor = ZCursor::new(image_bytes);
     let mut decoder = JpegDecoder::new(cursor);
@@ -247,90 +244,6 @@ async fn wifi_task(mut controller: esp_radio::wifi::WifiController<'static>) {
     }
 }
 
-// TODO: Figure this out
-// [ERROR] Failed to build HTTP request: Tls(HandshakeAborted(Warning, CloseNotify)) (synology_photo_frame src/bin/main.rs:320)
-async fn get_proxy_address<'t>(
-    stack: embassy_net::Stack<'t>,
-    quick_connect_id: &str,
-) -> alloc::vec::Vec<u8> {
-    // DNS Client
-    let dns = embassy_net::dns::DnsSocket::new(stack);
-
-    // TCP state
-    let tcp_state = embassy_net::tcp::client::TcpClientState::<1, 4096, 4096>::new();
-    let tcp = embassy_net::tcp::client::TcpClient::new(stack, &tcp_state);
-
-    println!("Attempting to do HTTP request2");
-
-    let mut write_buffer = [0u8; 8096];
-    let mut read_buffer = [0u8; 26640];
-    let config = TlsConfig::new(
-        696969,
-        &mut read_buffer,
-        &mut write_buffer,
-        reqwless::client::TlsVerify::None,
-    );
-
-    let mut http_client = reqwless::client::HttpClient::new_with_tls(&tcp, &dns, config);
-
-    // TODO: Extract the HTTP CLIENT stuff somewhere else?
-
-    let url = "https://global.quickconnect.to/Serv.php";
-
-    let request_body = json!({
-        "version": 1,
-        "command": "get_server_info",
-        "stop_when_error": false,
-        "stop_when_success": false,
-        "id": "mainapp_https",
-        "serverID": quick_connect_id,
-        "is_gofile": false,
-        "path": ""
-    });
-
-    let request_builder = http_client
-        .request(reqwless::request::Method::POST, url)
-        .await;
-
-    if let Err(e) = request_builder {
-        error!("Failed to build HTTP request: {:?}", e);
-        return alloc::vec::Vec::new();
-    }
-
-    let mut request = request_builder
-        .unwrap()
-        .headers(&[("User-Agent", "ESP32S3")])
-        .body(request_body.as_str().unwrap().as_bytes());
-
-    println!("Getting proxy address");
-
-    let mut http_rx_buf = [0u8; 4096];
-    let response = request.send(&mut http_rx_buf).await.unwrap();
-    let status = response.status.clone();
-
-    let mut body = response.body().reader();
-    println!("Reading body");
-
-    let mut data = alloc::vec::Vec::new();
-    loop {
-        let chunk = body.fill_buf().await.unwrap();
-        if chunk.is_empty() {
-            break;
-        }
-
-        data.extend_from_slice(chunk);
-        let len = chunk.len();
-        body.consume(len);
-    }
-    println!("Got body {:?}", core::str::from_utf8(&data).unwrap());
-
-    if !status.is_successful() {
-        error!("{:?}", core::str::from_utf8(&data).unwrap());
-    }
-
-    data
-}
-
 #[derive(Deserialize, Debug)]
 struct GetThumbnailParams {
     id: i64,
@@ -345,11 +258,13 @@ async fn get_stuff<'t>(
     album_passphase: &str,
 ) -> alloc::vec::Vec<u8> {
     let dns = embassy_net::dns::DnsSocket::new(stack);
-    let tcp_state = embassy_net::tcp::client::TcpClientState::<1, 2048, 2048>::new();
+    let tcp_state =
+        alloc::boxed::Box::new(embassy_net::tcp::client::TcpClientState::<1, 2048, 2048>::new());
+
     let tcp = embassy_net::tcp::client::TcpClient::new(stack, &tcp_state);
 
-    let mut write_buffer = [0u8; 2048];
-    let mut read_buffer = [0u8; 16640];
+    let mut write_buffer = alloc::vec![0u8; 2048];
+    let mut read_buffer = alloc::vec![0u8; 16640];
     let config = TlsConfig::new(
         696969,
         &mut read_buffer,

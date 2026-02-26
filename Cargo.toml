@@ -28,13 +28,12 @@ defmt = "1.0.1"
 esp-bootloader-esp-idf = { version = "0.4.0", features = ["defmt", "esp32s3"] }
 
 embassy-net = { version = "0.8.0", features = [
+  "alloc",
   "defmt",
   "dhcpv4",
   "dns",
   "mdns",
-  "medium-ethernet",
   "tcp",
-  "udp",
 ], default-features = false }
 embedded-io = { version = "0.7.1", features = ["defmt"] }
 embedded-io-async = { version = "0.7.0", features = ["defmt"] }
@@ -52,23 +51,10 @@ esp-radio = { version = "0.17.0", features = [
   "defmt",
   "esp-alloc",
   "esp32s3",
-  "smoltcp",
   "unstable",
   "wifi",
 ] }
-smoltcp = { version = "0.12.0", default-features = false, features = [
-  "defmt",
-  "medium-ethernet",
-  "multicast",
-  "proto-dhcpv4",
-  "proto-dns",
-  "proto-ipv4",
-  "socket-dns",
-  "socket-icmp",
-  "socket-raw",
-  "socket-tcp",
-  "socket-udp",
-] }
+
 critical-section = "1.2.0"
 static_cell = "2.1.1"
 embedded-graphics = "0.8.2"
