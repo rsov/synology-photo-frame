@@ -57,6 +57,15 @@ async fn main(spawner: Spawner) -> ! {
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
 
+    let mut rtc = esp_hal::rtc_cntl::Rtc::new(peripherals.LPWR);
+
+    let mut gpio_btn_reset = peripherals.GPIO3;
+    esp_hal::gpio::Input::new(
+        gpio_btn_reset.reborrow(),
+        esp_hal::gpio::InputConfig::default().with_pull(Pull::Up),
+    )
+    .is_low();
+
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73744);
     esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
 
@@ -145,7 +154,6 @@ async fn main(spawner: Spawner) -> ! {
 
     let mut display = Display7in3e::default();
 
-
     let cursor = ZCursor::new(image_bytes);
     let mut decoder = JpegDecoder::new(cursor);
 
@@ -187,21 +195,21 @@ async fn main(spawner: Spawner) -> ! {
 
     epd7in3e.sleep(&mut epd_spi_dev, &mut delay).unwrap();
 
-    // let wakeup_pins: &mut [(
-    //     &mut dyn esp_hal::gpio::RtcPin,
-    //     esp_hal::rtc_cntl::sleep::WakeupLevel,
-    // )] = &mut [(
-    //     &mut gpio_btn_reset,
-    //     esp_hal::rtc_cntl::sleep::WakeupLevel::Low,
-    // )];
-    // let pin_wake_source = esp_hal::rtc_cntl::sleep::RtcioWakeupSource::new(wakeup_pins);
+    let wakeup_pins: &mut [(
+        &mut dyn esp_hal::gpio::RtcPin,
+        esp_hal::rtc_cntl::sleep::WakeupLevel,
+    )] = &mut [(
+        &mut gpio_btn_reset,
+        esp_hal::rtc_cntl::sleep::WakeupLevel::Low,
+    )];
+    let pin_wake_source = esp_hal::rtc_cntl::sleep::RtcioWakeupSource::new(wakeup_pins);
 
-    // let timer_wake_source =
-    //     esp_hal::rtc_cntl::sleep::TimerWakeupSource::new(core::time::Duration::from_secs(10 * 60));
-    // let wake_sources: &[&dyn esp_hal::rtc_cntl::sleep::WakeSource] =
-    //     &[&timer_wake_source, &pin_wake_source];
+    let timer_wake_source =
+        esp_hal::rtc_cntl::sleep::TimerWakeupSource::new(core::time::Duration::from_secs(10 * 60));
+    let wake_sources: &[&dyn esp_hal::rtc_cntl::sleep::WakeSource] =
+        &[&timer_wake_source, &pin_wake_source];
 
-    // println!("Going to deep sleep :)");
+    println!("Going to deep sleep :)");
     // rtc.sleep_deep(wake_sources);
 
     loop {
@@ -292,6 +300,7 @@ async fn get_stuff<'t>(
         .unwrap();
 
         info!("[HTTP] -> {}", url.as_str());
+        info!("[HTTP] -> {}", esp_alloc::HEAP.stats());
 
         let request_builder = http_client
             .request(reqwless::request::Method::GET, &url.as_str())
@@ -306,7 +315,7 @@ async fn get_stuff<'t>(
 
         info!("[HTTP] Getting auth token");
 
-        let mut http_rx_buf = [0u8; 4096];
+        let mut http_rx_buf = alloc::vec![0u8; 4096];
         let response = request.send(&mut http_rx_buf).await.unwrap();
         let status = response.status.clone();
 
@@ -373,7 +382,7 @@ async fn get_stuff<'t>(
 
         let mut request = request_builder.unwrap();
 
-        let mut http_rx_buf = [0u8; 4096];
+        let mut http_rx_buf = alloc::vec![0u8; 4096];
         let response = request.send(&mut http_rx_buf).await.unwrap();
         let status = response.status.clone();
 
@@ -457,7 +466,7 @@ async fn get_stuff<'t>(
             .unwrap()
             .headers(&[("User-Agent", "ESP32S3")]);
 
-        let mut http_rx_buf = [0u8; 4096];
+        let mut http_rx_buf = alloc::vec![0u8; 4096];
         let response = request.send(&mut http_rx_buf).await.unwrap();
         let status = response.status.clone();
 
