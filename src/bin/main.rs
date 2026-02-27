@@ -42,7 +42,7 @@ extern crate alloc;
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
 
-static NETWORK_RESOURCES: static_cell::ConstStaticCell<embassy_net::StackResources<4>> =
+static NETWORK_RESOURCES: static_cell::ConstStaticCell<embassy_net::StackResources<3>> =
     static_cell::ConstStaticCell::new(embassy_net::StackResources::new());
 
 static RADIO_CONTROLLER: static_cell::StaticCell<esp_radio::Controller> =
@@ -56,12 +56,28 @@ static RADIO_CONTROLLER: static_cell::StaticCell<esp_radio::Controller> =
 async fn main(spawner: Spawner) -> ! {
     // generator version: 1.2.0
 
+    let wake_reason = esp_hal::rtc_cntl::wakeup_cause();
+
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
+    let mut gpio_btn_reset = peripherals.GPIO3;
+
+    let btn_reset_state = esp_hal::gpio::Input::new(
+        gpio_btn_reset.reborrow(),
+        esp_hal::gpio::InputConfig::default().with_pull(Pull::Up),
+    )
+    .is_low();
 
     let mut rtc = esp_hal::rtc_cntl::Rtc::new(peripherals.LPWR);
+    let time_since_boot = rtc.time_since_boot();
 
-    let mut gpio_btn_reset = peripherals.GPIO3;
+    println!(
+        "Device booting up | Wake {:?} | Button reset? {:?} | {:?}",
+        wake_reason,
+        btn_reset_state,
+        time_since_boot
+    );
+
     esp_hal::gpio::Input::new(
         gpio_btn_reset.reborrow(),
         esp_hal::gpio::InputConfig::default().with_pull(Pull::Up),
@@ -146,13 +162,13 @@ async fn main(spawner: Spawner) -> ! {
 
     let mut epd7in3e = Box::new(
         Epd7in3e::new(
-        &mut epd_spi_dev,
-        screen_busy,
-        screen_dc,
-        screen_rst,
-        &mut delay,
-        None,
-    )
+            &mut epd_spi_dev,
+            screen_busy,
+            screen_dc,
+            screen_rst,
+            &mut delay,
+            None,
+        )
         .unwrap(),
     );
 
@@ -213,17 +229,18 @@ async fn main(spawner: Spawner) -> ! {
     let pin_wake_source = esp_hal::rtc_cntl::sleep::RtcioWakeupSource::new(wakeup_pins);
 
     let timer_wake_source =
-        esp_hal::rtc_cntl::sleep::TimerWakeupSource::new(core::time::Duration::from_secs(10 * 60));
+        esp_hal::rtc_cntl::sleep::TimerWakeupSource::new(core::time::Duration::from_hours(12));
     let wake_sources: &[&dyn esp_hal::rtc_cntl::sleep::WakeSource] =
         &[&timer_wake_source, &pin_wake_source];
 
+    info!("[HTTP] -> {}", esp_alloc::HEAP.stats());
     println!("Going to deep sleep :)");
-    // rtc.sleep_deep(wake_sources);
+    rtc.sleep_deep(wake_sources);
 
-    loop {
-        info!("Hello world!");
-        Timer::after(Duration::from_secs(60)).await;
-    }
+    // loop {
+    //     info!("Hello world!");
+    //     Timer::after(Duration::from_secs(60)).await;
+    // }
 
     // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0/examples
 }
