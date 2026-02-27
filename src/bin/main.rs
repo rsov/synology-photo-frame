@@ -8,8 +8,10 @@
 #![deny(clippy::large_stack_frames)]
 
 use alloc::borrow::ToOwned;
+use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::{String, ToString};
+use alloc::vec::Vec;
 use defmt::{error, info, println};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
@@ -142,7 +144,8 @@ async fn main(spawner: Spawner) -> ! {
 
     info!("Screen pins");
 
-    let mut epd7in3e = Epd7in3e::new(
+    let mut epd7in3e = Box::new(
+        Epd7in3e::new(
         &mut epd_spi_dev,
         screen_busy,
         screen_dc,
@@ -150,9 +153,10 @@ async fn main(spawner: Spawner) -> ! {
         &mut delay,
         None,
     )
-    .unwrap();
+        .unwrap(),
+    );
 
-    let mut display = Display7in3e::default();
+    let mut display = Box::new(Display7in3e::default());
 
     let cursor = ZCursor::new(image_bytes);
     let mut decoder = JpegDecoder::new(cursor);
@@ -175,19 +179,23 @@ async fn main(spawner: Spawner) -> ! {
     // embedded grahics size: 600x676
     println!("image size: {:?}x{:?}", img_info.width, img_info.height);
 
-    let raw = ImageRaw::<HexColor>::new(&dithered_bytes, (resized_width) as u32);
+    // Not sure of boxing the image will do anything as it already takes in a vac but fuck it, we ball
+    let mut raw = Box::new(ImageRaw::<HexColor>::new(
+        &dithered_bytes,
+        (resized_width) as u32,
+    ));
     let r = raw.bounding_box().size;
     println!("raw size {:?}x{:?}", r.width, r.height);
 
     let size = display.size();
     let center = Point::new((size.width as i32) / 2, (size.height as i32) / 2);
 
-    let image = Image::with_center(&raw, center);
+    let image = Box::new(Image::with_center(raw.as_mut(), center));
 
     let s = image.bounding_box().size;
-    println!("Embedde image size: {:?}x{:?}", s.width, s.height);
+    println!("Embedded image size: {:?}x{:?}", s.width, s.height);
 
-    image.draw(&mut display).unwrap();
+    image.draw(display.as_mut()).unwrap();
 
     epd7in3e
         .update_and_display_frame(&mut epd_spi_dev, display.buffer(), &mut delay)
@@ -266,8 +274,7 @@ async fn get_stuff<'t>(
     album_passphase: &str,
 ) -> alloc::vec::Vec<u8> {
     let dns = embassy_net::dns::DnsSocket::new(stack);
-    let tcp_state =
-        alloc::boxed::Box::new(embassy_net::tcp::client::TcpClientState::<1, 2048, 2048>::new());
+    let tcp_state = Box::new(embassy_net::tcp::client::TcpClientState::<1, 2048, 2048>::new());
 
     let tcp = embassy_net::tcp::client::TcpClient::new(stack, &tcp_state);
 
@@ -459,7 +466,7 @@ async fn get_stuff<'t>(
 
         if let Err(e) = request_builder {
             error!("Failed to build HTTP request list album: {:?}", e);
-            return alloc::vec::Vec::new();
+            return Vec::new();
         }
 
         let mut request = request_builder
@@ -473,7 +480,7 @@ async fn get_stuff<'t>(
         let mut body = response.body().reader();
         println!("Reading thumbnail body");
 
-        let mut data = alloc::vec::Vec::new();
+        let mut data = Vec::new();
         loop {
             let chunk = body.fill_buf().await.unwrap();
             if chunk.is_empty() {
