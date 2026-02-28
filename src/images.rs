@@ -2,7 +2,6 @@ extern crate alloc;
 
 use alloc::vec;
 use alloc::vec::Vec;
-use embedded_graphics::pixelcolor::Rgb888;
 use epd_waveshare::prelude::HexColor;
 
 // This bit was Ai generated
@@ -85,13 +84,20 @@ pub fn floyd_steinberg_dither(width: usize, src: Vec<u8>) -> Vec<u8> {
             let old = work[idx];
 
             // Convert to Rgb888 for your existing From<Rgb888> → HexColor
-            let rgb = Rgb888::new(
-                old[0].clamp(0.0, 255.0) as u8,
-                old[1].clamp(0.0, 255.0) as u8,
-                old[2].clamp(0.0, 255.0) as u8,
+            // let rgb = Rgb888::new(
+            //     old[0].clamp(0.0, 255.0) as u8,
+            //     old[1].clamp(0.0, 255.0) as u8,
+            //     old[2].clamp(0.0, 255.0) as u8,
+            // );
+            
+            // This wans't ideal and produced washed out colors
+            // let new_color = HexColor::from(rgb);
+            
+            let new_color = better_rgb_to_hex_color(
+                old[0].clamp(0.0, 255.0),
+                old[1].clamp(0.0, 255.0),
+                old[2].clamp(0.0, 255.0),
             );
-
-            let new_color = HexColor::from(rgb);
             out[idx] = new_color.get_nibble();
 
             // Quantized RGB from your palette
@@ -101,12 +107,12 @@ pub fn floyd_steinberg_dither(width: usize, src: Vec<u8>) -> Vec<u8> {
             // Error = original - quantized
             let err = [old[0] - quant[0], old[1] - quant[1], old[2] - quant[2]];
 
-
             // Fuck around with these to change the vibrance / contrast
             // Basically to make it brigher do:
             //      *   -
             //  -   +   +
-            let i_dunno_lol: f32 = 2.2;
+            // let i_dunno_lol: f32 = -0.5;
+            let i_dunno_lol: f32 = 0.0;
 
             // Floyd–Steinberg diffusion
             //       *   7/16
@@ -150,4 +156,57 @@ pub fn floyd_steinberg_dither(width: usize, src: Vec<u8>) -> Vec<u8> {
     }
 
     out
+}
+
+
+// This was also AI generated because it's  a bit too low level for me
+pub fn better_rgb_to_hex_color(r: f32, g: f32, b: f32) -> HexColor {
+    // let (r, g, b) = (rgb.r() as f32, rgb.g() as f32, rgb.b() as f32);
+
+    // Calculate luminance
+    let luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+
+    // If very dark, return black
+    if luminance < 30.0 {
+        return HexColor::Black;
+    }
+
+    // If very bright and unsaturated, return white
+    let max_channel = r.max(g.max(b));
+    let min_channel = r.min(g.min(b));
+    let saturation = if max_channel > 0.0 {
+        (max_channel - min_channel) / max_channel
+    } else {
+        0.0
+    };
+
+    if luminance > 200.0 && saturation < 0.3 {
+        return HexColor::White;
+    }
+
+    // Find dominant color channel
+    if r > g && r > b {
+        // Red dominant
+        if g > b * 1.5 {
+            HexColor::Yellow // Red + Green = Yellow
+        } else {
+            HexColor::Red
+        }
+    } else if g > r && g > b {
+        // Green dominant
+        if r > b * 1.5 {
+            HexColor::Yellow // Green + Red = Yellow
+        } else {
+            HexColor::Green
+        }
+    } else if b > r && b > g {
+        HexColor::Blue
+    } else {
+        // Mixed colors or low saturation
+        if luminance > 127.0 {
+            HexColor::White
+        } else {
+            HexColor::Black
+        }
+    }
 }
