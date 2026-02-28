@@ -229,7 +229,7 @@ async fn main(spawner: Spawner) -> ! {
     let pin_wake_source = esp_hal::rtc_cntl::sleep::RtcioWakeupSource::new(wakeup_pins);
 
     let timer_wake_source =
-        esp_hal::rtc_cntl::sleep::TimerWakeupSource::new(core::time::Duration::from_hours(12));
+        esp_hal::rtc_cntl::sleep::TimerWakeupSource::new(core::time::Duration::from_hours(9));
     let wake_sources: &[&dyn esp_hal::rtc_cntl::sleep::WakeSource] =
         &[&timer_wake_source, &pin_wake_source];
 
