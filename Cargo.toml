@@ -60,13 +60,13 @@ static_cell = "2.1.1"
 embedded-graphics = "0.8.2"
 embedded-hal-bus = "0.3.0"
 
-# Pull Request in progress https://github.com/caemor/epd-waveshare/pull/235
+# Pull Request in progress https://github.com/rust-embedded-community/epd-waveshare/pull/235
 # epd-waveshare = { version = "0.6.0", features = ["graphics"] }
-# epd-waveshare = { git = "https://github.com/RitwikSaikia/epd-waveshare", branch = "feat/epd7in3e_impl", features = [
-#   "graphics",
-# ] }
+# Also I needed to chage the color bits because embedded grahics image was being created with double the width for some reason
+epd-waveshare = { git = "https://github.com/rsov/epd-waveshare", branch = "feat/epd7in3e_impl", features = [
+  "graphics",
+] }
 
-epd-waveshare = { path = "../epd-waveshare", features = ["graphics"] }
 
 reqwless = { version = "0.14.0", features = [
   "defmt",
