@@ -5,7 +5,7 @@ use alloc::vec::Vec;
 use epd_waveshare::prelude::HexColor;
 
 // This bit was Ai generated
-// The resize crate used too much memory and needed too much ceremony to covnert between RGB structs
+// The resize crate used too much memory and needed too much ceremony to convert between RGB structs
 pub fn mitchell_upscale(
     src: Vec<u8>,
     src_width: usize,
@@ -90,7 +90,7 @@ pub fn floyd_steinberg_dither(width: usize, src: Vec<u8>) -> Vec<u8> {
             //     old[2].clamp(0.0, 255.0) as u8,
             // );
             
-            // This wans't ideal and produced washed out colors
+            // This wasn't ideal and produced washed out colors
             // let new_color = HexColor::from(rgb);
             
             let new_color = better_rgb_to_hex_color(
@@ -108,7 +108,7 @@ pub fn floyd_steinberg_dither(width: usize, src: Vec<u8>) -> Vec<u8> {
             let err = [old[0] - quant[0], old[1] - quant[1], old[2] - quant[2]];
 
             // Fuck around with these to change the vibrance / contrast
-            // Basically to make it brigher do:
+            // Basically to make it brighter do:
             //      *   -
             //  -   +   +
             // let i_dunno_lol: f32 = -0.5;

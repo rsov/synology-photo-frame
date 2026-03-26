@@ -73,9 +73,7 @@ async fn main(spawner: Spawner) -> ! {
 
     println!(
         "Device booting up | Wake {:?} | Button reset? {:?} | {:?}",
-        wake_reason,
-        btn_reset_state,
-        time_since_boot
+        wake_reason, btn_reset_state, time_since_boot
     );
 
     esp_hal::gpio::Input::new(
@@ -131,7 +129,7 @@ async fn main(spawner: Spawner) -> ! {
     const SYN_USER: &str = env!("SYN_USER");
     const SYN_PASS: &str = env!("SYN_PASS");
     const SYN_ALBUM: &str = env!("SYN_ALBUM");
-    // THIS HAS TO BE DONE ASAP BECAUSE THERE'S SOME BULLSH*T BEHAVIOUR IF THE STACK SIZE IS OVER 50% AND IT TRIES TO MAKE A COPY OF IT FOR SOME DUMB ASS REASON
+    // THIS HAS TO BE DONE ASAP BECAUSE THERE'S SOME BULLSH*T BEHAVIOR IF THE STACK SIZE IS OVER 50% AND IT TRIES TO MAKE A COPY OF IT FOR SOME DUMB ASS REASON
     let image_bytes = get_stuff(net_stack, SYN_BASE, SYN_USER, SYN_PASS, SYN_ALBUM).await;
 
     let epd_spi_bus = Spi::new(
@@ -142,7 +140,6 @@ async fn main(spawner: Spawner) -> ! {
     )
     .unwrap()
     .with_sck(peripherals.GPIO7)
-    // .with_mosi(peripherals.GPIO8)
     .with_mosi(peripherals.GPIO9);
 
     info!("Bus ");
@@ -192,7 +189,7 @@ async fn main(spawner: Spawner) -> ! {
 
     // I think HexColor should be embedded_graphics_core::pixelcolor::raw::RawU4 because it causes this weird bug
     // image size: 600x338
-    // embedded grahics size: 600x676
+    // embedded graphics size: 600x676
     println!("image size: {:?}x{:?}", img_info.width, img_info.height);
 
     // Not sure of boxing the image will do anything as it already takes in a vac but fuck it, we ball
@@ -288,7 +285,7 @@ async fn get_stuff<'t>(
     base: &str,
     user: &str,
     pass: &str,
-    album_passphase: &str,
+    album_passphrase: &str,
 ) -> alloc::vec::Vec<u8> {
     let dns = embassy_net::dns::DnsSocket::new(stack);
     let tcp_state = Box::new(embassy_net::tcp::client::TcpClientState::<1, 2048, 2048>::new());
@@ -384,10 +381,10 @@ async fn get_stuff<'t>(
                 ("method", "list"),
                 ("additional", "[\"thumbnail\"]"),
                 ("sort_by", "takentime"),
-                ("offset", "0"), // TODO: Use these to retreive just the one random
+                ("offset", "0"), // TODO: Use these to retrieve just the one random
                 ("limit", "64"),
                 ("sort_direction", "asc"),
-                ("passphrase", album_passphase),
+                ("passphrase", album_passphrase),
                 ("_sid", &sid),
             ],
         )
@@ -468,7 +465,7 @@ async fn get_stuff<'t>(
                 ("id", thumb_params.id.to_string().as_str()),
                 ("type", "unit"),
                 ("size", "m"),
-                ("passphrase", album_passphase),
+                ("passphrase", album_passphrase),
                 ("cache_key", &thumb_params.cache_key),
                 ("_sid", &sid),
             ],
