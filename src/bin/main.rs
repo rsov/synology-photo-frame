@@ -23,6 +23,7 @@ use esp_hal::gpio::{Input, InputConfig, Pull};
 use esp_hal::gpio::{Level, Output, OutputConfig};
 use esp_hal::spi::master::Spi;
 use esp_hal::timer::timg::TimerGroup;
+use synology_photo_frame::battery::get_battery_voltage;
 use synology_photo_frame::images::floyd_steinberg_dither;
 use synology_photo_frame::images::mitchell_upscale;
 use synology_photo_frame::synology::get_image;
@@ -134,6 +135,11 @@ async fn main(spawner: Spawner) -> ! {
     .unwrap()
     .with_sck(peripherals.GPIO7)
     .with_mosi(peripherals.GPIO9);
+
+    let battery_percent =
+        get_battery_voltage(peripherals.ADC1, peripherals.GPIO1, peripherals.GPIO21);
+
+    info!("Battery is {:?}%", battery_percent);
 
     info!("Bus ");
     let mut delay = Delay::new();
