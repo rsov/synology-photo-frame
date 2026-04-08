@@ -8,11 +8,16 @@
 #![deny(clippy::large_stack_frames)]
 
 use alloc::boxed::Box;
+use alloc::format;
 use defmt::{info, println};
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use embedded_graphics::image::{Image, ImageRaw};
+use embedded_graphics::mono_font::MonoTextStyle;
+use embedded_graphics::mono_font::iso_8859_14::FONT_10X20;
 use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::{PrimitiveStyleBuilder, Rectangle};
+use embedded_graphics::text::{Alignment, Text};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use epd_waveshare::color::HexColor;
 use epd_waveshare::epd7in3e::{Display7in3e, Epd7in3e};
@@ -23,9 +28,8 @@ use esp_hal::gpio::{Input, InputConfig, Pull};
 use esp_hal::gpio::{Level, Output, OutputConfig};
 use esp_hal::spi::master::Spi;
 use esp_hal::timer::timg::TimerGroup;
-use synology_photo_frame::battery::get_battery_voltage;
-use synology_photo_frame::images::floyd_steinberg_dither;
-use synology_photo_frame::images::mitchell_upscale;
+use synology_photo_frame::battery::get_battery_percent;
+use synology_photo_frame::images::{floyd_steinberg_dither, mitchell_upscale};
 use synology_photo_frame::synology::get_image;
 use zune_jpeg::JpegDecoder;
 use zune_jpeg::zune_core::bytestream::ZCursor;
@@ -84,6 +88,9 @@ async fn main(spawner: Spawner) -> ! {
 
     info!("Embassy initialized!");
 
+    let battery_percent =
+        get_battery_percent(peripherals.ADC1, peripherals.GPIO1, peripherals.GPIO21);
+
     let radio_init = RADIO_CONTROLLER
         .init(esp_radio::init().expect("Failed to initialize Wi-Fi/BLE controller"));
     let (mut wifi_controller, interfaces) =
@@ -135,11 +142,6 @@ async fn main(spawner: Spawner) -> ! {
     .unwrap()
     .with_sck(peripherals.GPIO7)
     .with_mosi(peripherals.GPIO9);
-
-    let battery_percent =
-        get_battery_voltage(peripherals.ADC1, peripherals.GPIO1, peripherals.GPIO21);
-
-    info!("Battery is {:?}%", battery_percent);
 
     info!("Bus ");
     let mut delay = Delay::new();
@@ -209,6 +211,23 @@ async fn main(spawner: Spawner) -> ! {
 
     image.draw(display.as_mut()).unwrap();
 
+    Rectangle::new(Point::new(740, 0), Size::new(800, 20))
+        .into_styled(
+            PrimitiveStyleBuilder::new()
+                .fill_color(HexColor::Black)
+                .build(),
+        )
+        .draw(display.as_mut())
+        .unwrap();
+    Text::with_alignment(
+        format!("{:?}%", battery_percent).as_str(),
+        Point::new(795, 15),
+        MonoTextStyle::new(&FONT_10X20, HexColor::White),
+        Alignment::Right,
+    )
+    .draw(display.as_mut())
+    .unwrap();
+
     epd7in3e
         .update_and_display_frame(&mut epd_spi_dev, display.buffer(), &mut delay)
         .unwrap();
@@ -232,13 +251,6 @@ async fn main(spawner: Spawner) -> ! {
     info!("[HTTP] -> {}", esp_alloc::HEAP.stats());
     println!("Going to deep sleep :)");
     rtc.sleep_deep(wake_sources);
-
-    // loop {
-    //     info!("Hello world!");
-    //     Timer::after(Duration::from_secs(60)).await;
-    // }
-
-    // for inspiration have a look at the examples at https://github.com/esp-rs/esp-hal/tree/esp-hal-v1.0.0/examples
 }
 
 #[embassy_executor::task]
