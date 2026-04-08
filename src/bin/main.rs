@@ -28,7 +28,7 @@ use esp_hal::gpio::{Input, InputConfig, Pull};
 use esp_hal::gpio::{Level, Output, OutputConfig};
 use esp_hal::spi::master::Spi;
 use esp_hal::timer::timg::TimerGroup;
-use synology_photo_frame::battery::get_battery_percent;
+use synology_photo_frame::battery::get_charge_state;
 use synology_photo_frame::images::{floyd_steinberg_dither, mitchell_upscale};
 use synology_photo_frame::synology::get_image;
 use zune_jpeg::JpegDecoder;
@@ -52,27 +52,13 @@ static RADIO_CONTROLLER: static_cell::StaticCell<esp_radio::Controller> =
 )]
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    // generator version: 1.2.0
-
-    let wake_reason = esp_hal::rtc_cntl::wakeup_cause();
+    info!("BOOTING");
 
     let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
     let peripherals = esp_hal::init(config);
     let mut gpio_btn_reset = peripherals.GPIO3;
 
-    let btn_reset_state = esp_hal::gpio::Input::new(
-        gpio_btn_reset.reborrow(),
-        esp_hal::gpio::InputConfig::default().with_pull(Pull::Up),
-    )
-    .is_low();
-
     let mut rtc = esp_hal::rtc_cntl::Rtc::new(peripherals.LPWR);
-    let time_since_boot = rtc.time_since_boot();
-
-    info!(
-        "Device booting up | Wake {:?} | Button reset? {:?} | {:?}",
-        wake_reason, btn_reset_state, time_since_boot
-    );
 
     esp_hal::gpio::Input::new(
         gpio_btn_reset.reborrow(),
@@ -88,8 +74,83 @@ async fn main(spawner: Spawner) -> ! {
 
     info!("Embassy initialized!");
 
-    let battery_percent =
-        get_battery_percent(peripherals.ADC1, peripherals.GPIO1, peripherals.GPIO21);
+    let charge_state = get_charge_state(peripherals.ADC1, peripherals.GPIO1, peripherals.GPIO21);
+
+    let epd_spi_bus = Spi::new(
+        peripherals.SPI2,
+        esp_hal::spi::master::Config::default()
+            .with_frequency(esp_hal::time::Rate::from_mhz(20))
+            .with_mode(esp_hal::spi::Mode::_0),
+    )
+    .unwrap()
+    .with_sck(peripherals.GPIO7)
+    .with_mosi(peripherals.GPIO9);
+
+    info!("Bus ");
+    let mut delay = Delay::new();
+
+    let screen_cs = Output::new(peripherals.GPIO10, Level::Low, OutputConfig::default());
+    let screen_dc = Output::new(peripherals.GPIO11, Level::Low, OutputConfig::default());
+    let screen_rst = Output::new(peripherals.GPIO12, Level::Low, OutputConfig::default());
+    let screen_busy = Input::new(
+        peripherals.GPIO13,
+        InputConfig::default().with_pull(Pull::Up),
+    );
+
+    let mut epd_spi_dev = ExclusiveDevice::new(epd_spi_bus, screen_cs, delay).unwrap();
+
+    info!("Screen pins");
+
+    let mut epd7in3e = Box::new(
+        Epd7in3e::new(
+            &mut epd_spi_dev,
+            screen_busy,
+            screen_dc,
+            screen_rst,
+            &mut delay,
+            None,
+        )
+        .unwrap(),
+    );
+
+    let mut display = Box::new(Display7in3e::default());
+
+    // Prevent battery damage
+    if charge_state.percent == 0 {
+        Text::with_alignment(
+            format!(
+                "I NEEDS A CHARGE\nBATTERY IS {}% v{:.2}\nPRESS RESET TO UPDATE",
+                charge_state.percent, charge_state.volts
+            )
+            .as_str(),
+            Point::new(
+                (epd7in3e.width() / 2) as i32,
+                (epd7in3e.height() / 2) as i32,
+            ),
+            MonoTextStyle::new(&FONT_10X20, HexColor::White),
+            Alignment::Center,
+        )
+        .draw(display.as_mut())
+        .unwrap();
+
+        epd7in3e
+            .update_and_display_frame(&mut epd_spi_dev, display.buffer(), &mut delay)
+            .unwrap();
+
+        epd7in3e.sleep(&mut epd_spi_dev, &mut delay).unwrap();
+
+        let wakeup_pins: &mut [(
+            &mut dyn esp_hal::gpio::RtcPin,
+            esp_hal::rtc_cntl::sleep::WakeupLevel,
+        )] = &mut [(
+            &mut gpio_btn_reset,
+            esp_hal::rtc_cntl::sleep::WakeupLevel::Low,
+        )];
+        let pin_wake_source = esp_hal::rtc_cntl::sleep::RtcioWakeupSource::new(wakeup_pins);
+
+        info!("[BAT] -> Going for long sleep");
+        rtc.sleep_deep(&[&pin_wake_source]);
+    }
 
     let radio_init = RADIO_CONTROLLER
         .init(esp_radio::init().expect("Failed to initialize Wi-Fi/BLE controller"));
@@ -132,45 +193,6 @@ async fn main(spawner: Spawner) -> ! {
     const SYN_ALBUM: &str = env!("SYN_ALBUM");
     // THIS HAS TO BE DONE ASAP BECAUSE THERE'S SOME BULLSH*T BEHAVIOR IF THE STACK SIZE IS OVER 50% AND IT TRIES TO MAKE A COPY OF IT FOR SOME DUMB ASS REASON
     let image_bytes = get_image(net_stack, SYN_BASE, SYN_USER, SYN_PASS, SYN_ALBUM).await;
-
-    let epd_spi_bus = Spi::new(
-        peripherals.SPI2,
-        esp_hal::spi::master::Config::default()
-            .with_frequency(esp_hal::time::Rate::from_mhz(20))
-            .with_mode(esp_hal::spi::Mode::_0),
-    )
-    .unwrap()
-    .with_sck(peripherals.GPIO7)
-    .with_mosi(peripherals.GPIO9);
-
-    info!("Bus ");
-    let mut delay = Delay::new();
-
-    let screen_cs = Output::new(peripherals.GPIO10, Level::Low, OutputConfig::default());
-    let screen_dc = Output::new(peripherals.GPIO11, Level::Low, OutputConfig::default());
-    let screen_rst = Output::new(peripherals.GPIO12, Level::Low, OutputConfig::default());
-    let screen_busy = Input::new(
-        peripherals.GPIO13,
-        InputConfig::default().with_pull(Pull::Up),
-    );
-
-    let mut epd_spi_dev = ExclusiveDevice::new(epd_spi_bus, screen_cs, delay).unwrap();
-
-    info!("Screen pins");
-
-    let mut epd7in3e = Box::new(
-        Epd7in3e::new(
-            &mut epd_spi_dev,
-            screen_busy,
-            screen_dc,
-            screen_rst,
-            &mut delay,
-            None,
-        )
-        .unwrap(),
-    );
-
-    let mut display = Box::new(Display7in3e::default());
 
     let cursor = ZCursor::new(image_bytes);
     let mut decoder = JpegDecoder::new(cursor);
@@ -217,13 +239,18 @@ async fn main(spawner: Spawner) -> ! {
     Rectangle::new(Point::new(740, 0), Size::new(800, 20))
         .into_styled(
             PrimitiveStyleBuilder::new()
-                .fill_color(HexColor::Black)
+                .fill_color(if charge_state.percent <= 10 {
+                    HexColor::Red
+                } else {
+                    HexColor::Black
+                })
                 .build(),
         )
         .draw(display.as_mut())
         .unwrap();
+
     Text::with_alignment(
-        format!("{:?}%", battery_percent).as_str(),
+        format!("{:?}%", charge_state.percent).as_str(),
         Point::new(795, 15),
         MonoTextStyle::new(&FONT_10X20, HexColor::White),
         Alignment::Right,
