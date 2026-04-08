@@ -9,7 +9,7 @@
 
 use alloc::boxed::Box;
 use alloc::format;
-use defmt::{info, println};
+use defmt::info;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use embedded_graphics::image::{Image, ImageRaw};
@@ -69,7 +69,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut rtc = esp_hal::rtc_cntl::Rtc::new(peripherals.LPWR);
     let time_since_boot = rtc.time_since_boot();
 
-    println!(
+    info!(
         "Device booting up | Wake {:?} | Button reset? {:?} | {:?}",
         wake_reason, btn_reset_state, time_since_boot
     );
@@ -120,11 +120,11 @@ async fn main(spawner: Spawner) -> ! {
     spawner.spawn(wifi_task(wifi_controller)).unwrap();
     spawner.spawn(net_task(net_runner)).unwrap();
 
-    println!("Waiting for network link...");
+    info!("[NET] Waiting for network link...");
     net_stack.wait_link_up().await;
-    println!("Link up, waiting for config up");
+    info!("[NET] Link up, waiting for config up");
     net_stack.wait_config_up().await;
-    println!("Network config up! {:?}", net_stack.config_v4());
+    info!("[NET] Network config up! {:?}", net_stack.config_v4());
 
     const SYN_BASE: &str = env!("SYN_BASE");
     const SYN_USER: &str = env!("SYN_USER");
@@ -191,7 +191,10 @@ async fn main(spawner: Spawner) -> ! {
     // I think HexColor should be embedded_graphics_core::pixelcolor::raw::RawU4 because it causes this weird bug
     // image size: 600x338
     // embedded graphics size: 600x676
-    println!("image size: {:?}x{:?}", img_info.width, img_info.height);
+    info!(
+        "[PIC] image size: {:?}x{:?}",
+        img_info.width, img_info.height
+    );
 
     // Not sure of boxing the image will do anything as it already takes in a vac but fuck it, we ball
     let mut raw = Box::new(ImageRaw::<HexColor>::new(
@@ -199,7 +202,7 @@ async fn main(spawner: Spawner) -> ! {
         (resized_width) as u32,
     ));
     let r = raw.bounding_box().size;
-    println!("raw size {:?}x{:?}", r.width, r.height);
+    info!("[PIC] raw size {:?}x{:?}", r.width, r.height);
 
     let size = display.size();
     let center = Point::new((size.width as i32) / 2, (size.height as i32) / 2);
@@ -207,7 +210,7 @@ async fn main(spawner: Spawner) -> ! {
     let image = Box::new(Image::with_center(raw.as_mut(), center));
 
     let s = image.bounding_box().size;
-    println!("Embedded image size: {:?}x{:?}", s.width, s.height);
+    info!("[PIC] Embedded image size: {:?}x{:?}", s.width, s.height);
 
     image.draw(display.as_mut()).unwrap();
 
@@ -249,7 +252,7 @@ async fn main(spawner: Spawner) -> ! {
         &[&timer_wake_source, &pin_wake_source];
 
     info!("[HTTP] -> {}", esp_alloc::HEAP.stats());
-    println!("Going to deep sleep :)");
+    info!("Going to deep sleep :)");
     rtc.sleep_deep(wake_sources);
 }
 
@@ -260,25 +263,25 @@ async fn net_task(mut runner: embassy_net::Runner<'static, esp_radio::wifi::Wifi
 
 #[embassy_executor::task]
 async fn wifi_task(mut controller: esp_radio::wifi::WifiController<'static>) {
-    println!("Start connection task");
-    println!("Device capabilities: {:?}", controller.capabilities());
+    info!("[NET] Start connection task");
+    info!("[NET] Device capabilities: {:?}", controller.capabilities());
 
-    println!("Starting WiFi");
+    info!("[NET] Starting WiFi");
     controller.start_async().await.unwrap();
-    println!("Wifi started");
+    info!("[NET] Wifi started");
     loop {
-        println!("Connecting WiFi");
+        info!("[NET] Connecting WiFi");
         match controller.connect_async().await {
             Ok(_) => {
-                println!("Connected");
+                info!("[NET] Connected");
                 controller
                     .wait_for_event(esp_radio::wifi::WifiEvent::StaDisconnected)
                     .await;
-                println!("Disconnected");
+                info!("[NET] Disconnected");
             }
             Err(e) => {
-                println!("Failed to connect to wifi: {:?}", e);
-                println!("Retry in 5sec");
+                info!("[NET] Failed to connect to wifi: {:?}", e);
+                info!("[NET] Retry in 5sec");
                 Timer::after(Duration::from_secs(5)).await;
             }
         }
