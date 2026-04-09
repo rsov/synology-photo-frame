@@ -26,7 +26,10 @@ pub fn get_charge_state(
     let mut battery_measure_enable_pin =
         Output::new(enable_pin, Level::High, OutputConfig::default());
 
-    let adc_value = adc.read_blocking(&mut adc_pin);
+    let adc_value = adc.read_blocking(&mut adc_pin) as f64;
+    // So i fully charged the device and then fudged this number until the voltage read 4.2
+    // I've seen people use x2 but also with 12db attenuation
+    let adc_value = adc_value * 2.65;
 
     info!("[BAT] ADC value {}", adc_value);
 
@@ -43,13 +46,13 @@ pub fn get_charge_state(
 }
 
 // not sure why adc doesn't give mill-amps right away
-fn adc_to_v(adc: u16) -> f64 {
-    (adc as f64 * 3.3) / 4095.0
+fn adc_to_v(adc: f64) -> f64 {
+    adc * 3.3 / 4095.0
 }
 
 fn voltage_to_battery_percentage(v: f64) -> i8 {
-    let v_max = 4.20; // blaze it
-    let v_min = 3.00; // I've seen it go down to 1.5 :/
+    let v_max = 4.20; // blaze it lol
+    let v_min = 3.27;
 
     let pct = (v - v_min) / (v_max - v_min) * 100.0;
 
