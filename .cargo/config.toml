@@ -1,4 +1,5 @@
 [target.xtensa-esp32s3-none-elf]
+# For some reason probers can't find the chip
 runner = "espflash flash --monitor --chip esp32s3 --log-format defmt"
 
 [env]
