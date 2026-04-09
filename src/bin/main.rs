@@ -236,18 +236,29 @@ async fn main(spawner: Spawner) -> ! {
 
     image.draw(display.as_mut()).unwrap();
 
-    Rectangle::new(Point::new(740, 0), Size::new(800, 20))
-        .into_styled(
-            PrimitiveStyleBuilder::new()
-                .fill_color(if charge_state.percent <= 10 {
-                    HexColor::Red
-                } else {
-                    HexColor::Black
-                })
-                .build(),
-        )
-        .draw(display.as_mut())
-        .unwrap();
+    Rectangle::new(
+        Point::new(
+            // Make the box smaller if we don't need the whole numbers
+            if charge_state.percent == 100 {
+                740
+            } else {
+                770
+            },
+            0,
+        ),
+        Size::new(800, 20),
+    )
+    .into_styled(
+        PrimitiveStyleBuilder::new()
+            .fill_color(if charge_state.percent <= 10 {
+                HexColor::Red
+            } else {
+                HexColor::Black
+            })
+            .build(),
+    )
+    .draw(display.as_mut())
+    .unwrap();
 
     Text::with_alignment(
         format!("{:?}%", charge_state.percent).as_str(),
@@ -278,8 +289,7 @@ async fn main(spawner: Spawner) -> ! {
     let wake_sources: &[&dyn esp_hal::rtc_cntl::sleep::WakeSource] =
         &[&timer_wake_source, &pin_wake_source];
 
-    info!("[HTTP] -> {}", esp_alloc::HEAP.stats());
-    info!("Going to deep sleep :)");
+    info!("[ESP] Going to deep sleep :)");
     rtc.sleep_deep(wake_sources);
 }
 
