@@ -26,8 +26,10 @@ use esp_hal::clock::CpuClock;
 use esp_hal::delay::Delay;
 use esp_hal::gpio::{Input, InputConfig, Pull};
 use esp_hal::gpio::{Level, Output, OutputConfig};
+use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::spi::master::Spi;
 use esp_hal::timer::timg::TimerGroup;
+use esp_radio::wifi::WifiController;
 use synology_photo_frame::battery::get_charge_state;
 use synology_photo_frame::images::{floyd_steinberg_dither, mitchell_upscale};
 use synology_photo_frame::synology::get_image;
@@ -42,9 +44,6 @@ esp_bootloader_esp_idf::esp_app_desc!();
 
 static NETWORK_RESOURCES: static_cell::ConstStaticCell<embassy_net::StackResources<3>> =
     static_cell::ConstStaticCell::new(embassy_net::StackResources::new());
-
-static RADIO_CONTROLLER: static_cell::StaticCell<esp_radio::Controller> =
-    static_cell::StaticCell::new();
 
 #[allow(
     clippy::large_stack_frames,
@@ -67,10 +66,18 @@ async fn main(spawner: Spawner) -> ! {
     .is_low();
 
     esp_alloc::heap_allocator!(#[esp_hal::ram(reclaimed)] size: 73744);
-    esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram);
+
+    let psram_config = esp_hal::psram::PsramConfig {
+        // Downloading more RAM
+        mode: esp_hal::psram::PsramMode::OctalSpi,
+        ..Default::default()
+    };
+
+    esp_alloc::psram_allocator!(peripherals.PSRAM, esp_hal::psram, psram_config);
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_rtos::start(timg0.timer0);
+    let sw_int = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+    esp_rtos::start(timg0.timer0, sw_int.software_interrupt0);
 
     info!("Embassy initialized!");
 
@@ -116,7 +123,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut display = Box::new(Display7in3e::default());
 
     // Prevent battery damage
-    if charge_state.percent == 0 {
+    if charge_state.percent <= 5 {
         Text::with_alignment(
             format!(
                 "I NEEDS A CHARGE\nBATTERY IS {}% v{:.2}\nPRESS RESET TO UPDATE",
@@ -152,34 +159,34 @@ async fn main(spawner: Spawner) -> ! {
         rtc.sleep_deep(&[&pin_wake_source]);
     }
 
-    let radio_init = RADIO_CONTROLLER
-        .init(esp_radio::init().expect("Failed to initialize Wi-Fi/BLE controller"));
-    let (mut wifi_controller, interfaces) =
-        esp_radio::wifi::new(radio_init, peripherals.WIFI, Default::default())
-            .expect("Failed to initialize Wi-Fi controller");
-
     const SSID: &str = env!("WIFI_SSID");
     const PASSWORD: &str = env!("WIFI_PASSWORD");
 
-    let wifi_sta_device = interfaces.sta;
+    info!("[NET] Starting WiFi");
 
-    let sta_config = embassy_net::Config::dhcpv4(Default::default());
-
-    let station_config = esp_radio::wifi::ModeConfig::Client(
-        esp_radio::wifi::ClientConfig::default()
-            .with_ssid(SSID.into())
+    let station_config = esp_radio::wifi::Config::Station(
+        esp_radio::wifi::sta::StationConfig::default()
+            .with_ssid(SSID)
             .with_password(PASSWORD.into()),
     );
-    wifi_controller.set_config(&station_config).unwrap();
+    let (wifi_controller, interfaces) = esp_radio::wifi::new(
+        peripherals.WIFI,
+        esp_radio::wifi::ControllerConfig::default().with_initial_config(station_config),
+    )
+    .expect("Failed to initialize Wi-Fi controller");
 
     let rng = esp_hal::rng::Rng::new();
     let seed = (rng.random() as u64) << 32 | rng.random() as u64;
 
-    let (net_stack, net_runner) =
-        embassy_net::new(wifi_sta_device, sta_config, NETWORK_RESOURCES.take(), seed);
+    let (net_stack, net_runner) = embassy_net::new(
+        interfaces.station,
+        embassy_net::Config::dhcpv4(Default::default()),
+        NETWORK_RESOURCES.take(),
+        seed,
+    );
 
-    spawner.spawn(wifi_task(wifi_controller)).unwrap();
-    spawner.spawn(net_task(net_runner)).unwrap();
+    spawner.spawn(wifi_task(wifi_controller).unwrap());
+    spawner.spawn(net_task(net_runner).unwrap());
 
     info!("[NET] Waiting for network link...");
     net_stack.wait_link_up().await;
@@ -294,26 +301,20 @@ async fn main(spawner: Spawner) -> ! {
 }
 
 #[embassy_executor::task]
-async fn net_task(mut runner: embassy_net::Runner<'static, esp_radio::wifi::WifiDevice<'static>>) {
+async fn net_task(mut runner: embassy_net::Runner<'static, esp_radio::wifi::Interface<'static>>) {
     runner.run().await
 }
 
 #[embassy_executor::task]
-async fn wifi_task(mut controller: esp_radio::wifi::WifiController<'static>) {
+async fn wifi_task(mut controller: WifiController<'static>) {
     info!("[NET] Start connection task");
-    info!("[NET] Device capabilities: {:?}", controller.capabilities());
 
-    info!("[NET] Starting WiFi");
-    controller.start_async().await.unwrap();
-    info!("[NET] Wifi started");
     loop {
         info!("[NET] Connecting WiFi");
         match controller.connect_async().await {
             Ok(_) => {
                 info!("[NET] Connected");
-                controller
-                    .wait_for_event(esp_radio::wifi::WifiEvent::StaDisconnected)
-                    .await;
+                controller.wait_for_disconnect_async().await.ok();
                 info!("[NET] Disconnected");
             }
             Err(e) => {
