@@ -243,35 +243,24 @@ async fn main(spawner: Spawner) -> ! {
 
     image.draw(display.as_mut()).unwrap();
 
-    Rectangle::new(
-        Point::new(
-            // Make the box smaller if we don't need the whole numbers
-            if charge_state.percent == 100 {
-                740
-            } else {
-                770
-            },
-            0,
-        ),
-        Size::new(800, 20),
-    )
-    .into_styled(
-        PrimitiveStyleBuilder::new()
-            .fill_color(if charge_state.percent <= 10 {
-                HexColor::Red
-            } else {
-                HexColor::Black
-            })
-            .build(),
-    )
-    .draw(display.as_mut())
-    .unwrap();
+    Rectangle::new(Point::new(50, 10), Size::new(50, 20))
+        .into_styled(
+            PrimitiveStyleBuilder::new()
+                .fill_color(if charge_state.percent <= 10 {
+                    HexColor::Red
+                } else {
+                    HexColor::Black
+                })
+                .build(),
+        )
+        .draw(display.as_mut())
+        .unwrap();
 
     Text::with_alignment(
         format!("{:?}%", charge_state.percent).as_str(),
-        Point::new(795, 15),
+        Point::new(50, 25),
         MonoTextStyle::new(&FONT_10X20, HexColor::White),
-        Alignment::Right,
+        Alignment::Left,
     )
     .draw(display.as_mut())
     .unwrap();
