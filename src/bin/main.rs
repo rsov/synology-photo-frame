@@ -81,7 +81,7 @@ async fn main(spawner: Spawner) -> ! {
 
     info!("Embassy initialized!");
 
-    let charge_state = get_charge_state(peripherals.ADC1, peripherals.GPIO1, peripherals.GPIO21);
+    let charge_state = get_charge_state(peripherals.ADC1, peripherals.GPIO1, peripherals.GPIO21).await;
 
     let epd_spi_bus = Spi::new(
         peripherals.SPI2,
